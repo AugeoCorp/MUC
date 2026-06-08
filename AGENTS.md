@@ -18,9 +18,9 @@ shell are solid first. Two seams mark where the real work lands:
 
 - **`src/net/transport.ts`** — the `Transport` interface the UI talks to. The
   only implementation today is an in-memory loopback
-  (`src/net/transport.stub.ts`) that echoes your own messages back. A real
-  peer-to-peer transport drops in behind this interface later (the transport
-  technology is **not yet chosen** — don't assume one).
+  (`src/net/transport.stub.ts`) that echoes your own messages back. The real
+  transport will be built on **libp2p over the public IPFS DHT** (decided in
+  direction, not yet implemented) — see [`docs/spec.md`](./docs/spec.md).
 - **`src/ui/`** — a rough Ink chat shell (message list + composer), enough to
   prove the rendering and the transport seam, not a finished UX.
 

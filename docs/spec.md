@@ -139,14 +139,70 @@ were mirroring you. It needs no network and exists only to exercise the UI.
 
 ### What a real transport must add
 
-- Peer discovery / connection establishment (technology **not yet chosen**).
+- Peer discovery / connection establishment (via **libp2p** — see below).
 - Serializing `ChatMessage` over the wire and reconstructing it on receipt.
 - Delivering remote peers' messages to subscribers, not just local echoes.
 - Connection lifecycle: joins, drops, errors, reconnects.
 
-Open question: which transport. Hyperswarm (DHT-based, serverless) has been
-floated but nothing is committed. The interface is intentionally narrow so the
-decision stays cheap to defer.
+### Chosen direction: libp2p over the public IPFS DHT
+
+The transport will be built on **[libp2p](https://libp2p.io/)**, riding the
+**public IPFS / Amino DHT** for discovery. This is a _decision of direction_;
+implementation stays deferred behind the seam until we leave the foundation
+phase.
+
+**Membership model — open / ad-hoc.** MUC is for people who connect by sharing a
+room key, with no accounts and no managed network. That choice is what selects
+libp2p: an open DHT fits "anyone with the key joins." (It's also why Tailscale
+was set aside — its model is authenticated devices on a shared tailnet, which
+would force every user onto an account + daemon. Good tech, wrong membership
+model for this.)
+
+**How peers find each other.** Every node has a cryptographic **PeerId**;
+addresses are **multiaddrs** (`/ip4/…/tcp/…/p2p/PeerId`). To meet, all
+participants derive a key (a CID) from the shared room name and use the DHT's
+provider records:
+
+- `provide(key)` — announce "I'm here for this room."
+- `findProviders(key)` — look up everyone else who announced.
+
+Same rendezvous model we liked in the abstract — a topic/key is the search term,
+the DHT turns it into reachable addresses — but riding a **neutral,
+multi-implementation, foundation-governed** network rather than a single
+vendor's.
+
+**How peers connect (NAT traversal).** The primary path is **punchthrough**:
+`AutoNAT` detects reachability, and **DCUtR** (Direct Connection Upgrade through
+Relay) coordinates a simultaneous-open holepunch to a direct connection.
+
+> **The relay question is deliberately left open.** libp2p's Circuit Relay v2 is
+> the fallback _if_ holepunch fails for a peer pair — but whether MUC actually
+> needs a relay (and whether we'd run one) is **a thing to measure, not
+> assume**. The plan is to see how DCUtR punchthrough performs in real-world NAT
+> testing first. The bootstrap and relay lists will be **configuration**, so
+> adding a relay later is a config change, not a rewrite.
+
+**Why libp2p (vs. the alternatives we weighed).**
+
+- **Neutral & multi-impl** (Go/Rust/JS, foundation-governed) — answers the
+  vendor-concentration concern that ruled out Hyperswarm.
+- **Mostly pure-JS** for our module set (TCP/QUIC + kad-dht + dcutr) — keeps the
+  clean, native-dep-free distribution story (no `node-gyp`, bundles cleanly).
+- **Zero infrastructure of our own** to start — ride public bootstrap + Amino
+  DHT.
+
+**Open items to validate when we implement.**
+
+- DCUtR holepunch success rate across real home NATs (drives the relay
+  decision).
+- DHT `findProviders` latency on the public network (the "join room → see peers"
+  UX moment).
+- Final libp2p module set + versions (js-libp2p churns; pin carefully).
+
+**Mapping onto the seam.** `TransportOptions` will gain a room key; `connect` →
+start node + `provide`/`findProviders` on the room CID; `send` → broadcast over
+peer streams (likely gossipsub); `subscribe` → inbound stream/topic handler;
+`disconnect` → leave the topic and stop the node.
 
 ## Toolchain & Conventions
 
@@ -198,12 +254,15 @@ Two build-environment notes worth remembering:
 
 ## Open Decisions & Next Steps
 
-1. **Pick the transport.** The defining technical choice — Hyperswarm vs
-   js-libp2p vs raw sockets/WebRTC. Drives discovery, NAT traversal, and
-   encryption.
+1. **Transport — decided in direction (libp2p / public IPFS), not yet built.**
+   The next real step is a spike behind the seam: a minimal libp2p node doing
+   `provide`/`findProviders` on a room CID + DCUtR punchthrough, measured
+   against the open items above (holepunch success, lookup latency). That spike
+   informs the relay decision.
 2. **Flesh out the chat UX.** Scrollback, timestamps, peer presence, your own vs
    others' message styling, input affordances.
-3. **Identity & rooms.** How peers find each other and what "a conversation" is
-   (topic? invite code? address exchange?).
-4. **Wire protocol.** How a `ChatMessage` is serialized once there are real
-   peers.
+3. **Identity & rooms.** Room key = the shared discovery key; what "a
+   conversation" is (room name → CID? invite code?). Peer identity = libp2p
+   PeerId.
+4. **Wire protocol.** How a `ChatMessage` is serialized over libp2p streams
+   (likely gossipsub) once there are real peers.
