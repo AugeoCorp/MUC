@@ -1,0 +1,68 @@
+{
+	"name": "@augeo/muc",
+	"version": "0.0.0",
+	"description": "Peer-to-peer chat in your terminal.",
+	"homepage": "https://github.com/seanhealy/muc#readme",
+	"bugs": {
+		"url": "https://github.com/seanhealy/muc/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/seanhealy/muc.git"
+	},
+	"license": "MIT",
+	"author": "Sean Healy",
+	"type": "module",
+	"bin": {
+		"muc": "dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"keywords": [
+		"cli",
+		"tui",
+		"ink",
+		"chat",
+		"p2p",
+		"peer-to-peer",
+		"terminal"
+	],
+	"engines": {
+		"node": "24.10.0",
+		"npm": "11.6.2"
+	},
+	"volta": {
+		"node": "24.10.0",
+		"npm": "11.6.2"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"dev": "tsx src/cli.tsx",
+		"lint": "biome check && prettier --check --cache .",
+		"lint:fix": "biome check --write && prettier --write --cache .",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"verify": "npm run lint:fix && npm run typecheck && npm run test && npm run build"
+	},
+	"dependencies": {
+		"citty": "^0.2.2",
+		"ink": "^7.0.5",
+		"react": "^19.2.7"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.16",
+		"@types/node": "^25.9.2",
+		"@types/react": "^19.2.17",
+		"prettier": "^3.8.3",
+		"tsdown": "^0.22.2",
+		"tsx": "^4.22.4",
+		"typescript": "^6.0.3",
+		"unrun": "^0.3.1",
+		"vitest": "^4.1.8"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

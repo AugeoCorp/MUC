@@ -1,0 +1,13 @@
+# Prettier handles only Markdown. Biome owns everything else.
+# Ignore everything by default, then re-allow what Prettier should format.
+*
+
+!*.md
+!**/*.md
+
+# Needed for the negations above to traverse into directories.
+!*/
+
+# Generated / vendored
+node_modules
+dist

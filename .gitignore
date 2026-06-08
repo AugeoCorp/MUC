@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+dist/
+
+# Claude Code
+.claude/worktrees/
+.claude/plans/
+.claude/settings.local.json
