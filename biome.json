@@ -45,5 +45,17 @@
 				"useSortedProperties": "on"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["src/ui/Editor.tsx"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noControlCharactersInRegex": "off"
+					}
+				}
+			}
+		}
+	]
 }

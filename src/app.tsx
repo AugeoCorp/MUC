@@ -1,26 +1,31 @@
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
-import type { ChatMessage, Transport } from "./net/transport.ts";
-import { Composer } from "./ui/Composer.tsx";
-import { MessageList } from "./ui/MessageList.tsx";
+import {
+	type CollabSession,
+	createCollabSession,
+	type UserInfo,
+} from "./collab/session.ts";
+import type { Channel } from "./net/channel.ts";
+import { Editor } from "./ui/Editor.tsx";
+import { Title } from "./ui/Title.tsx";
 
 type ConnectionStatus = "connecting" | "ready" | "error";
 
 interface AppProps {
-	handle: string;
-	connect: () => Promise<Transport>;
+	user: UserInfo;
+	connect: () => Promise<Channel>;
 	/** Set when hosting — the public relay URL to share with others. */
 	shareUrl?: string;
 }
 
-export function App({ handle, connect, shareUrl }: AppProps) {
-	const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function App({ user, connect, shareUrl }: AppProps) {
 	const [status, setStatus] = useState<ConnectionStatus>("connecting");
-	const [transport, setTransport] = useState<Transport>();
+	const [session, setSession] = useState<CollabSession>();
 
 	useEffect(() => {
 		let active = true;
-		let connected: Transport | undefined;
+		let channel: Channel | undefined;
+		let live: CollabSession | undefined;
 
 		connect()
 			.then((ready) => {
@@ -28,8 +33,9 @@ export function App({ handle, connect, shareUrl }: AppProps) {
 					ready.disconnect();
 					return;
 				}
-				connected = ready;
-				setTransport(ready);
+				channel = ready;
+				live = createCollabSession(ready, user);
+				setSession(live);
 				setStatus("ready");
 			})
 			.catch(() => {
@@ -38,44 +44,22 @@ export function App({ handle, connect, shareUrl }: AppProps) {
 
 		return () => {
 			active = false;
-			connected?.disconnect();
+			live?.destroy();
+			channel?.disconnect();
 		};
-	}, [connect]);
-
-	useEffect(() => {
-		if (transport === undefined) return;
-		return transport.subscribe((message) => {
-			setMessages((current) => [...current, message]);
-		});
-	}, [transport]);
+	}, [connect, user]);
 
 	return (
 		<Box flexDirection="column" padding={1}>
-			<Text bold color="magentaBright">
-				muc · {handle}
-			</Text>
+			<Title />
 			{shareUrl !== undefined && (
 				<Text color="greenBright">Invite others — share: {shareUrl}</Text>
 			)}
-			<StatusLine status={status} />
-			<Box marginY={1}>
-				<MessageList messages={messages} />
-			</Box>
-			<Composer
-				onSubmit={(body) => {
-					transport?.send(body);
-				}}
-			/>
+			{status === "connecting" && <Text color="yellow">Connecting…</Text>}
+			{status === "error" && <Text color="red">Could not connect.</Text>}
+			{status === "ready" && session !== undefined && (
+				<Editor session={session} />
+			)}
 		</Box>
 	);
-}
-
-function StatusLine({ status }: { status: ConnectionStatus }) {
-	if (status === "connecting") {
-		return <Text color="yellow">Joining the network — finding peers…</Text>;
-	}
-	if (status === "error") {
-		return <Text color="red">Could not start the transport.</Text>;
-	}
-	return <Text dimColor>Connected. Searching for roommates — say hello.</Text>;
 }

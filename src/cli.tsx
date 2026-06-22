@@ -2,24 +2,37 @@
 import { defineCommand, runMain } from "citty";
 import { render } from "ink";
 import { App } from "./app.tsx";
+import type { UserInfo } from "./collab/session.ts";
+import {
+	type Channel,
+	createLocalChannel,
+	createTunnelChannel,
+} from "./net/channel.ts";
 import { startRelay } from "./net/relay.ts";
-import { createLoopbackTransport } from "./net/transport.stub.ts";
-import type { Transport } from "./net/transport.ts";
-import { createTunnelTransport } from "./net/transport.tunnel.ts";
 import { startCloudflareTunnel } from "./net/tunnel.ts";
 
 const handle = {
 	type: "string",
-	description: "Display name other peers see.",
+	description: "Display name other people see.",
 	default: "anon",
 } as const;
 
-// `muc serve` — host the room: stand up a local relay, expose it through a
-// public Cloudflare tunnel, then join your own relay so you can chat too.
+// A small set of distinct cursor colors, chosen deterministically from the
+// handle so the same name keeps the same color across a session.
+const PALETTE = ["cyan", "magenta", "green", "yellow", "blue", "redBright"];
+function userFrom(name: string): UserInfo {
+	let sum = 0;
+	for (const character of name) sum += character.charCodeAt(0);
+	return { name, color: PALETTE[sum % PALETTE.length] };
+}
+
+// `muc serve` — host the shared box: stand up a local relay, expose it through a
+// public Cloudflare tunnel, then join your own relay so you can edit too.
 const serve = defineCommand({
 	meta: {
 		name: "serve",
-		description: "Host the room: start a relay and a public Cloudflare tunnel.",
+		description:
+			"Host the shared box: start a relay and a public Cloudflare tunnel.",
 	},
 	args: { handle },
 	async run({ args }) {
@@ -36,12 +49,10 @@ const serve = defineCommand({
 			return;
 		}
 
-		const connect = (): Promise<Transport> =>
-			createTunnelTransport({ handle: args.handle, url: localUrl });
-
+		const connect = (): Promise<Channel> => createTunnelChannel(localUrl);
 		const instance = render(
 			<App
-				handle={args.handle}
+				user={userFrom(args.handle)}
 				connect={connect}
 				shareUrl={tunnel.publicUrl}
 			/>,
@@ -56,7 +67,7 @@ const serve = defineCommand({
 const main = defineCommand({
 	meta: {
 		name: "muc",
-		description: "Peer-to-peer chat in your terminal.",
+		description: "A shared, collaboratively-edited text box in your terminal.",
 	},
 	args: {
 		handle,
@@ -67,7 +78,7 @@ const main = defineCommand({
 		},
 		loopback: {
 			type: "boolean",
-			description: "Skip the network; echo your own messages locally.",
+			description: "Skip the network; edit the box solo.",
 			default: false,
 		},
 	},
@@ -81,12 +92,14 @@ const main = defineCommand({
 			return;
 		}
 
-		const connect = (): Promise<Transport> =>
+		const connect = (): Promise<Channel> =>
 			args.loopback
-				? Promise.resolve(createLoopbackTransport({ handle: args.handle }))
-				: createTunnelTransport({ handle: args.handle, url: args.url });
+				? Promise.resolve(createLocalChannel())
+				: createTunnelChannel(args.url);
 
-		const instance = render(<App handle={args.handle} connect={connect} />);
+		const instance = render(
+			<App user={userFrom(args.handle)} connect={connect} />,
+		);
 		return instance.waitUntilExit();
 	},
 });
