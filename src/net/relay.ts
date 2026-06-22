@@ -1,7 +1,9 @@
 // A dumb fan-out hub. The host runs one of these locally; a Cloudflare tunnel
 // exposes it publicly (see tunnel.ts). Clients hold open a streaming GET on
-// /events to receive messages and POST to /send to broadcast — newline-
-// delimited JSON in both directions, so no framing library is needed. Everyone
+// /events to receive messages (Server-Sent Events) and POST to /send to
+// broadcast (a JSON body). SSE matters here: Cloudflare buffers ordinary
+// streaming responses — holding tiny chat lines back indefinitely — but won't
+// buffer text/event-stream, so messages reach tunnelled clients live. Everyone
 // connected shares one common space.
 
 import {
@@ -38,7 +40,7 @@ export function startRelay(): Promise<Relay> {
 	});
 
 	const heartbeat = setInterval(() => {
-		subscribers.forEach((subscriber) => subscriber.write("\n"));
+		subscribers.forEach((subscriber) => subscriber.write(":\n\n"));
 	}, HEARTBEAT_INTERVAL);
 
 	return new Promise((resolve) => {
@@ -64,13 +66,13 @@ function openStream(
 	response: ServerResponse,
 ): void {
 	response.writeHead(200, {
-		"content-type": "application/x-ndjson",
+		"content-type": "text/event-stream",
 		"cache-control": "no-cache",
 		connection: "keep-alive",
 	});
 	// Flush headers immediately so the client's fetch resolves before any message
-	// arrives — the blank line is a harmless no-op the client ignores.
-	response.write("\n");
+	// arrives. A leading SSE comment (": …") is ignored by the client.
+	response.write(":\n\n");
 
 	subscribers.add(response);
 	request.on("close", () => {
@@ -84,8 +86,11 @@ async function broadcast(
 	response: ServerResponse,
 ): Promise<void> {
 	const body = await readBody(request);
-	const line = `${body}\n`;
-	subscribers.forEach((subscriber) => subscriber.write(line));
+	// One SSE event per message: a single `data:` line carrying the JSON, ended
+	// by a blank line. JSON.stringify never emits raw newlines, so it stays one
+	// line.
+	const frame = `data: ${body}\n\n`;
+	subscribers.forEach((subscriber) => subscriber.write(frame));
 	response.writeHead(204).end();
 }
 

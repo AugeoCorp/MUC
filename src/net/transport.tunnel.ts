@@ -1,8 +1,8 @@
 // The Transport that talks to a relay (relay.ts), reached over a Cloudflare
-// tunnel. Receives by holding open a streaming GET and parsing newline-
-// delimited JSON off the body; sends by POSTing one message at a time. Node 24
-// has no global EventSource, so we read the stream ourselves — which keeps this
-// dependency-free and the wire format trivial.
+// tunnel. Receives by holding open a streaming GET of Server-Sent Events and
+// reading the `data:` lines; sends by POSTing one message at a time. Node 24
+// has no global EventSource, so we parse the SSE stream ourselves — which keeps
+// this dependency-free.
 
 import type { ChatMessage, Transport, TransportOptions } from "./transport.ts";
 
@@ -24,14 +24,14 @@ export async function createTunnelTransport(
 
 	const response = await fetch(eventsUrl, {
 		signal: controller.signal,
-		headers: { accept: "application/x-ndjson" },
+		headers: { accept: "text/event-stream" },
 	});
 	if (!response.ok || response.body === null) {
 		throw new Error(`Relay refused the connection (${response.status}).`);
 	}
 
-	void readLines(response.body, (line) => {
-		const message = decodeMessage(line);
+	void readEvents(response.body, (payload) => {
+		const message = decodeMessage(payload);
 		if (message !== undefined) {
 			listeners.forEach((listener) => listener(message));
 		}
@@ -61,11 +61,12 @@ export async function createTunnelTransport(
 	};
 }
 
-// Pull chunks off the stream, split on newlines, and hand each non-empty line
-// to the listener. Blank lines are relay heartbeats and are skipped.
-async function readLines(
+// Pull chunks off the SSE stream, split into lines, and hand the JSON payload of
+// each `data:` line to the listener. Blank lines (event boundaries) and `:`
+// comment lines (relay heartbeats) are skipped.
+async function readEvents(
 	stream: ReadableStream<Uint8Array>,
-	onLine: (line: string) => void,
+	onData: (payload: string) => void,
 ): Promise<void> {
 	const reader = stream.getReader();
 	const decoder = new TextDecoder();
@@ -78,7 +79,7 @@ async function readLines(
 		const lines = buffer.split("\n");
 		buffer = lines.pop() ?? "";
 		lines.forEach((line) => {
-			if (line.trim() !== "") onLine(line);
+			if (line.startsWith("data:")) onData(line.slice(5).trim());
 		});
 		return pump();
 	};
