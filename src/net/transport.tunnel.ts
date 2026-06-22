@@ -1,8 +1,9 @@
 // The Transport that talks to a relay (relay.ts), reached over a Cloudflare
-// tunnel. Receives by holding open a streaming GET of Server-Sent Events and
-// reading the `data:` lines; sends by POSTing one message at a time. Node 24
-// has no global EventSource, so we parse the SSE stream ourselves — which keeps
-// this dependency-free.
+// tunnel. Sends by POSTing one message at a time; receives by short-polling
+// GET /messages?since=<cursor> on a timer. Polling rather than streaming is
+// deliberate — Cloudflare's quick tunnel won't reliably forward a long-lived
+// server→client stream, but plain request/response sails through. The first
+// poll starts at cursor 0, so a late joiner pulls the backlog as history.
 
 import type { ChatMessage, Transport, TransportOptions } from "./transport.ts";
 
@@ -11,31 +12,57 @@ export interface TunnelTransportOptions extends TransportOptions {
 	url: string;
 }
 
+// How often we ask the relay for anything new. Fast enough to feel live, slow
+// enough to stay cheap.
+const POLL_INTERVAL = 800;
+
+interface MessagesResponse {
+	cursor: number;
+	items: string[];
+}
+
 export async function createTunnelTransport(
 	options: TunnelTransportOptions,
 ): Promise<Transport> {
 	const { handle, url } = options;
 	const base = url.replace(/\/$/, "");
-	const eventsUrl = `${base}/events`;
 	const sendUrl = `${base}/send`;
+	const messagesUrl = (since: number) => `${base}/messages?since=${since}`;
 
 	const listeners = new Set<(message: ChatMessage) => void>();
-	const controller = new AbortController();
+	let cursor = 0;
 
-	const response = await fetch(eventsUrl, {
-		signal: controller.signal,
-		headers: { accept: "text/event-stream" },
+	// Validate the relay up front so a bad URL surfaces as a connection error
+	// rather than silent dead air. Leave the cursor at 0 so the first real poll
+	// delivers any backlog to subscribers (who attach just after we return).
+	const probe = await fetch(messagesUrl(0), {
+		headers: { accept: "application/json" },
 	});
-	if (!response.ok || response.body === null) {
-		throw new Error(`Relay refused the connection (${response.status}).`);
+	if (!probe.ok) {
+		throw new Error(`Relay refused the connection (${probe.status}).`);
 	}
+	await probe.json().catch(() => undefined);
 
-	void readEvents(response.body, (payload) => {
-		const message = decodeMessage(payload);
-		if (message !== undefined) {
-			listeners.forEach((listener) => listener(message));
+	const poll = async (): Promise<void> => {
+		try {
+			const response = await fetch(messagesUrl(cursor), {
+				headers: { accept: "application/json" },
+			});
+			if (!response.ok) return;
+			const data = (await response.json()) as MessagesResponse;
+			cursor = data.cursor;
+			data.items.forEach((item) => {
+				const message = decodeMessage(item);
+				if (message !== undefined) {
+					listeners.forEach((listener) => listener(message));
+				}
+			});
+		} catch {
+			// Transient network hiccup — just try again on the next tick.
 		}
-	});
+	};
+
+	const timer = setInterval(() => void poll(), POLL_INTERVAL);
 
 	return {
 		send(body) {
@@ -55,41 +82,15 @@ export async function createTunnelTransport(
 			return () => listeners.delete(listener);
 		},
 		disconnect() {
-			controller.abort();
+			clearInterval(timer);
 			listeners.clear();
 		},
 	};
 }
 
-// Pull chunks off the SSE stream, split into lines, and hand the JSON payload of
-// each `data:` line to the listener. Blank lines (event boundaries) and `:`
-// comment lines (relay heartbeats) are skipped.
-async function readEvents(
-	stream: ReadableStream<Uint8Array>,
-	onData: (payload: string) => void,
-): Promise<void> {
-	const reader = stream.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-
-	const pump = async (): Promise<void> => {
-		const { done, value } = await reader.read();
-		if (done) return;
-		buffer += decoder.decode(value, { stream: true });
-		const lines = buffer.split("\n");
-		buffer = lines.pop() ?? "";
-		lines.forEach((line) => {
-			if (line.startsWith("data:")) onData(line.slice(5).trim());
-		});
-		return pump();
-	};
-
-	await pump().catch(() => undefined);
-}
-
-function decodeMessage(line: string): ChatMessage | undefined {
+function decodeMessage(item: string): ChatMessage | undefined {
 	try {
-		return JSON.parse(line) as ChatMessage;
+		return JSON.parse(item) as ChatMessage;
 	} catch {
 		return undefined;
 	}
