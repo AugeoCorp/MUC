@@ -1,30 +1,52 @@
 import { Box, Text } from "ink";
-import { useEffect, useMemo, useState } from "react";
-import { createLoopbackTransport } from "./net/transport.stub.ts";
-import type { ChatMessage } from "./net/transport.ts";
+import { useEffect, useState } from "react";
+import type { ChatMessage, Transport } from "./net/transport.ts";
 import { Composer } from "./ui/Composer.tsx";
 import { MessageList } from "./ui/MessageList.tsx";
 
+type ConnectionStatus = "connecting" | "ready" | "error";
+
 interface AppProps {
 	handle: string;
+	connect: () => Promise<Transport>;
+	/** Set when hosting — the public relay URL to share with others. */
+	shareUrl?: string;
 }
 
-export function App({ handle }: AppProps) {
-	const transport = useMemo(
-		() => createLoopbackTransport({ handle }),
-		[handle],
-	);
+export function App({ handle, connect, shareUrl }: AppProps) {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
+	const [status, setStatus] = useState<ConnectionStatus>("connecting");
+	const [transport, setTransport] = useState<Transport>();
 
 	useEffect(() => {
-		const unsubscribe = transport.subscribe((message) => {
-			setMessages((current) => [...current, message]);
-		});
+		let active = true;
+		let connected: Transport | undefined;
+
+		connect()
+			.then((ready) => {
+				if (!active) {
+					ready.disconnect();
+					return;
+				}
+				connected = ready;
+				setTransport(ready);
+				setStatus("ready");
+			})
+			.catch(() => {
+				if (active) setStatus("error");
+			});
 
 		return () => {
-			unsubscribe();
-			transport.disconnect();
+			active = false;
+			connected?.disconnect();
 		};
+	}, [connect]);
+
+	useEffect(() => {
+		if (transport === undefined) return;
+		return transport.subscribe((message) => {
+			setMessages((current) => [...current, message]);
+		});
 	}, [transport]);
 
 	return (
@@ -32,13 +54,28 @@ export function App({ handle }: AppProps) {
 			<Text bold color="magentaBright">
 				muc · {handle}
 			</Text>
-			<Text dimColor>
-				Loopback transport — no peers yet. Type a message and press enter.
-			</Text>
+			{shareUrl !== undefined && (
+				<Text color="greenBright">Invite others — share: {shareUrl}</Text>
+			)}
+			<StatusLine status={status} />
 			<Box marginY={1}>
 				<MessageList messages={messages} />
 			</Box>
-			<Composer onSubmit={(body) => transport.send(body)} />
+			<Composer
+				onSubmit={(body) => {
+					transport?.send(body);
+				}}
+			/>
 		</Box>
 	);
+}
+
+function StatusLine({ status }: { status: ConnectionStatus }) {
+	if (status === "connecting") {
+		return <Text color="yellow">Joining the network — finding peers…</Text>;
+	}
+	if (status === "error") {
+		return <Text color="red">Could not start the transport.</Text>;
+	}
+	return <Text dimColor>Connected. Searching for roommates — say hello.</Text>;
 }
