@@ -7,25 +7,41 @@ or real credentials.
 
 ## Project Overview
 
-`muc` (published as `@augeo/muc`) is a terminal chat client — an interactive TUI
-where people open a peer-to-peer connection and chat together. It is a
-**bin/script**, not a library: it builds to a single executable (`dist/cli.js`)
-that users run with `npx @augeo/muc` or install globally as `muc`.
+`muc` (published as `@augeo/muc`) is a terminal TUI where several people edit
+one shared text box together in real time. It is a **bin/script**, not a
+library: it builds to a single executable (`dist/cli.js`) that users run with
+`npx @augeo/muc` or install globally as `muc`.
 
-The project is in its **foundation phase**. The chat experience and the
-peer-to-peer transport are deliberately stubbed so the toolchain, build, and app
-shell are solid first. Two seams mark where the real work lands:
+## Architecture
 
-- **`src/net/transport.ts`** — the `Transport` interface the UI talks to. The
-  only implementation today is an in-memory loopback
-  (`src/net/transport.stub.ts`) that echoes your own messages back. The real
-  transport will be built on **libp2p over the public IPFS DHT** (decided in
-  direction, not yet implemented) — see [`docs/spec.md`](./docs/spec.md).
-- **`src/ui/`** — a rough Ink chat shell (message list + composer), enough to
-  prove the rendering and the transport seam, not a finished UX.
+The document is a [Yjs](https://github.com/yjs/yjs) CRDT, and the network is a
+central relay behind a Cloudflare tunnel — a star topology, **not**
+peer-to-peer.
 
-See [`docs/spec.md`](./docs/spec.md) for the full foundation spec —
-architecture, the transport contract, and open decisions.
+- One host runs `muc serve`: it stands up a local HTTP relay
+  (`src/net/relay.ts`, an in-memory message log) and exposes it publicly through
+  a Cloudflare Quick Tunnel (`src/net/tunnel.ts`), printing a URL to share.
+- Everyone — the host included — joins as a client over a **`Channel`**
+  (`src/net/channel.ts`), which short-polls the relay for new frames and POSTs
+  its own. Long-lived streaming is deliberately avoided; a quick tunnel won't
+  reliably forward one.
+- The shared state lives in `src/collab/session.ts`: local edits and cursors are
+  encoded as base64 frames and ridden over the channel, and inbound frames are
+  applied to the Yjs doc. Because the relay replays its whole log to a late
+  joiner, the document reconstructs automatically.
+- The UI (`src/ui/Editor.tsx`) treats Yjs as the single source of truth — React
+  never stores the text, it re-renders from the doc.
+
+**The seam** is the `Channel` interface (`src/net/channel.ts`), where the
+network meets the collaboration layer. Two implementations exist today: the
+tunnel-backed channel and a no-op `createLocalChannel` for solo editing
+(`--loopback`).
+
+> **Direction note.** The original goal was true peer-to-peer over libp2p / the
+> IPFS DHT; [`docs/spec.md`](./docs/spec.md) describes that plan and is now
+> historical. The relay-over-tunnel transport was chosen to get a working shared
+> experience first. Swapping in a real p2p transport later means providing
+> another `Channel`.
 
 ## Tech Stack
 
@@ -45,14 +61,18 @@ architecture, the transport contract, and open decisions.
 
 ```
 src/
-├── cli.tsx                # citty entrypoint + shebang; renders the Ink app
-├── app.tsx                # root <App> — wires transport ↔ UI state
+├── cli.tsx                # citty entrypoint + shebang; `muc` and `muc serve`
+├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
 ├── ui/
-│   ├── MessageList.tsx     # renders the message log
-│   └── Composer.tsx        # captures keystrokes, submits on enter
+│   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
+│   └── Title.tsx           # the header line
+├── collab/
+│   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay
+│   └── cursors.ts          # relative-position cursor encode / decode
 ├── net/
-│   ├── transport.ts        # Transport interface (the P2P seam)
-│   └── transport.stub.ts   # loopback placeholder implementation
+│   ├── channel.ts          # Channel interface + tunnel / local implementations
+│   ├── relay.ts            # local HTTP message-log server (the host runs this)
+│   └── tunnel.ts           # spawns `cloudflared` for a public URL
 └── utilities/
     ├── assertValue.ts
     └── assertValue.test.ts
@@ -101,7 +121,7 @@ after any non-trivial change, not just at submit time.
 - **Directory modules:** when a module grows into a directory, use `index.ts` as
   a barrel export only — implementation lives in a named file.
 - **Relative imports carry their extension** (e.g. `./app.tsx`,
-  `./net/transport.ts`) — `moduleResolution: bundler` + `noEmit` require it and
+  `./net/channel.ts`) — `moduleResolution: bundler` + `noEmit` require it and
   tsdown resolves it.
 - **Keep it simple.** Don't over-engineer. The only certainty is that we'll need
   to change what we write — favor code that's easy to mutate.
@@ -119,7 +139,8 @@ after any non-trivial change, not just at submit time.
 ## Working Style
 
 - **Ask before assuming.** Stop and ask for clarification when requirements are
-  unclear — especially around the not-yet-chosen transport.
+  unclear — especially around the network layer and any move back toward true
+  peer-to-peer.
 - **One problem at a time** for complex multi-file changes. Fix one and verify
   before continuing.
 
