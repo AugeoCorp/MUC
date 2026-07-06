@@ -219,10 +219,13 @@ export function applyKey(
 		return;
 	}
 
-	// Shift+Enter (or Option+Enter) toggles "ready to send". Terminals emit the
-	// chord as ESC+Enter; plain Enter (a bare \r) stays a newline below. When
-	// everyone is ready the host sends the draft (see collab/session.ts).
-	if (seq === "\x1b\r" || seq === "\x1b\n") {
+	// Toggle "ready to send". Ctrl+S is the reliable chord — it reaches the app
+	// identically in every terminal (raw mode disables its legacy XOFF meaning).
+	// Shift+Enter / Option+Enter also work where the terminal emits ESC+Enter
+	// (Ghostty, kitty); iTerm2 and Terminal.app don't by default. Plain Enter (a
+	// bare \r) stays a newline below. When everyone is ready the host sends the
+	// draft (see collab/session.ts).
+	if (seq === "\x13" || seq === "\x1b\r" || seq === "\x1b\n") {
 		session.setReady(!session.isReady());
 		return;
 	}
@@ -531,7 +534,7 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 			<Text>
 				<Text color="gray">┄ </Text>
 				<Text bold>{DOC_NAME}</Text>
-				<Text color="gray"> ┄ co-draft it together, ⇧⏎ when you're ready</Text>
+				<Text color="gray"> ┄ co-draft it together, ⌃s when you're ready</Text>
 			</Text>
 			<Box
 				borderStyle="round"
@@ -547,7 +550,7 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 					{readyCount}/{participantCount} ready
 				</Text>
 				<Text color="gray">
-					{everyoneReady ? " · sending…" : " · ⇧⏎ toggles ready"}
+					{everyoneReady ? " · sending…" : " · ⌃s toggles ready"}
 				</Text>
 			</Box>
 			<Box marginTop={1} flexDirection="column">

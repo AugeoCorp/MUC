@@ -57,12 +57,13 @@ muc --loopback
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
        ⌃z undo · ⌃y redo · ⌃c quit
-send   ⇧⏎ toggle ready — the host sends once everyone is ready
+send   ⌃s toggle ready — the host sends once everyone is ready
 ```
 
-> **Note:** `⇧⏎` (Shift+Enter) also works as `⌥⏎` (Option+Enter). It depends on
-> your terminal emitting a distinct sequence for it; if Shift+Enter just inserts
-> a newline, use Option+Enter instead.
+> **Note:** `⌃s` (Ctrl+S) is the reliable "ready" chord and works in every
+> terminal. `⇧⏎`/`⌥⏎` (Shift/Option+Enter) also toggle ready in terminals that
+> emit a distinct sequence for it (e.g. Ghostty, kitty) — but **not** iTerm2 or
+> macOS Terminal by default, where they just insert a newline.
 
 ## Develop
 
