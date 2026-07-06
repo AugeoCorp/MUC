@@ -28,6 +28,9 @@ export interface UserInfo {
 /** The collaborative text lives under this key in the doc. */
 export const CONTENT_KEY = "content";
 
+/** The shared log of submitted messages lives under this key in the doc. */
+export const MESSAGES_KEY = "messages";
+
 // Edits the local user makes are tagged LOCAL_ORIGIN (so undo can track only
 // them); edits that arrived from a peer are tagged NETWORK_ORIGIN (so we never
 // echo them back out and loop).
@@ -39,11 +42,15 @@ export interface RemoteCursor {
 	user: UserInfo;
 	/** Absolute index in the local doc, or undefined if not currently resolvable. */
 	index: number | undefined;
+	/** Whether this participant has marked themselves ready to send. */
+	ready: boolean;
 }
 
 export interface CollabSession {
 	doc: Y.Doc;
 	text: Y.Text;
+	/** The shared log of submitted messages, oldest first. */
+	messages: Y.Array<string>;
 	awareness: Awareness;
 	undoManager: Y.UndoManager;
 	user: UserInfo;
@@ -53,6 +60,12 @@ export interface CollabSession {
 	getLocalIndex(): number;
 	/** Every other participant's cursor, resolved against the local doc. */
 	getRemoteCursors(): RemoteCursor[];
+	/** Mark (or clear) the local user as ready to send. No-op if unchanged. */
+	setReady(ready: boolean): void;
+	/** Whether the local user is currently ready. */
+	isReady(): boolean;
+	/** Whether every present participant — the local user included — is ready. */
+	isEveryoneReady(): boolean;
 	/** Tear everything down: drop presence and destroy the doc/awareness. */
 	destroy(): void;
 }
@@ -71,13 +84,35 @@ const fromBase64 = (text: string): Uint8Array =>
 export function createCollabSession(
 	channel: Channel,
 	user: UserInfo,
+	options: { isHost?: boolean } = {},
 ): CollabSession {
 	const doc = new Y.Doc();
 	const text = doc.getText(CONTENT_KEY);
+	const messages = doc.getArray<string>(MESSAGES_KEY);
 	const awareness = new Awareness(doc);
 
+	// Local awareness state (cursor + ready) is written from one place so the two
+	// fields never clobber each other. The cursor is stored as a relative
+	// position (see cursors.ts) so it survives concurrent edits.
+	let localCursor = encodeCursor(text, text.length);
+	let localReady = false;
+	function publishLocalState(): void {
+		awareness.setLocalState({ user, cursor: localCursor, ready: localReady });
+	}
+
 	function publishCursor(index: number): void {
-		awareness.setLocalState({ user, cursor: encodeCursor(text, index) });
+		localCursor = encodeCursor(text, index);
+		publishLocalState();
+	}
+
+	function setReady(ready: boolean): void {
+		if (ready === localReady) return; // unchanged — stay off the wire
+		localReady = ready;
+		publishLocalState();
+	}
+
+	function isReady(): boolean {
+		return localReady;
 	}
 
 	function getLocalIndex(): number {
@@ -91,15 +126,25 @@ export function createCollabSession(
 		const cursors: RemoteCursor[] = [];
 		awareness.getStates().forEach((state, clientId) => {
 			if (clientId === doc.clientID) return;
-			const entry = state as { cursor?: number[]; user?: UserInfo };
+			const entry = state as {
+				cursor?: number[];
+				user?: UserInfo;
+				ready?: boolean;
+			};
 			if (entry.user === undefined) return;
 			cursors.push({
 				clientId,
 				user: entry.user,
 				index: decodeCursor(entry.cursor, doc),
+				ready: entry.ready === true,
 			});
 		});
 		return cursors;
+	}
+
+	function isEveryoneReady(): boolean {
+		if (!localReady) return false;
+		return getRemoteCursors().every((cursor) => cursor.ready);
 	}
 
 	// --- The wire: relay binary doc updates over the channel -------------------
@@ -156,16 +201,47 @@ export function createCollabSession(
 		}
 	});
 
+	// --- Ready → send ---------------------------------------------------------
+	// The host is the single writer that turns "everyone ready" into a sent
+	// message: it appends the trimmed draft to the shared log and clears the
+	// composer, both in one transaction that syncs to every peer. Only the host
+	// acts, so the log never gains duplicate copies from a simultaneous trigger.
+	function submitIfEveryoneReady(): void {
+		if (options.isHost !== true) return;
+		if (!isEveryoneReady()) return;
+		const draft = text.toString().trim();
+		if (draft === "") return;
+		doc.transact(() => {
+			messages.push([draft]);
+			text.delete(0, text.length);
+		}, LOCAL_ORIGIN);
+	}
+
+	// Whenever a message lands — from our own submit or a peer's — every client
+	// clears its own ready flag so the next draft starts clean. A client can only
+	// reset itself, so this fires everywhere rather than the host reaching into
+	// anyone else's presence.
+	const onPresenceChange = (): void => submitIfEveryoneReady();
+	const onMessageAdded = (): void => setReady(false);
+	awareness.on("change", onPresenceChange);
+	messages.observe(onMessageAdded);
+
 	return {
 		doc,
 		text,
+		messages,
 		awareness,
 		undoManager,
 		user,
 		publishCursor,
 		getLocalIndex,
 		getRemoteCursors,
+		setReady,
+		isReady,
+		isEveryoneReady,
 		destroy() {
+			awareness.off("change", onPresenceChange);
+			messages.unobserve(onMessageAdded);
 			unsubscribe();
 			undoManager.destroy();
 			removeAwarenessStates(awareness, [doc.clientID], "destroy");

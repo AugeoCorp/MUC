@@ -7,10 +7,16 @@ or real credentials.
 
 ## Project Overview
 
-`muc` (published as `@augeo/muc`) is a terminal TUI where several people edit
-one shared text box together in real time. It is a **bin/script**, not a
-library: it builds to a single executable (`dist/cli.js`) that users run with
-`npx @augeo/muc` or install globally as `muc`.
+`muc` (published as `@augeo/muc`) is a terminal TUI for **co-drafting a message
+to an AI agent, together**. Several people share one text box and edit it live —
+cursors and all — and once the message reads right, it goes to the agent. It is
+a **bin/script**, not a library: it builds to a single executable
+(`dist/cli.js`) that users run with `npx @augeo/muc` or install globally as
+`muc`.
+
+Today the collaborative composer is real; wiring the drafted message through to
+the agent is the work in progress. The architecture below describes the shared
+box — the multiplayer input line the whole thing is built around.
 
 ## Architecture
 

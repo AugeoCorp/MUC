@@ -54,6 +54,7 @@ const serve = defineCommand({
 			<App
 				user={userFrom(args.handle)}
 				connect={connect}
+				isHost
 				shareUrl={tunnel.publicUrl}
 			/>,
 		);
@@ -97,8 +98,14 @@ const main = defineCommand({
 				? Promise.resolve(createLocalChannel())
 				: createTunnelChannel(args.url);
 
+		// Solo (`--loopback`) has no relay, so that lone user hosts their own
+		// session; someone who joined with `--url` is a guest, never the submitter.
 		const instance = render(
-			<App user={userFrom(args.handle)} connect={connect} />,
+			<App
+				user={userFrom(args.handle)}
+				connect={connect}
+				isHost={args.loopback}
+			/>,
 		);
 		return instance.waitUntilExit();
 	},

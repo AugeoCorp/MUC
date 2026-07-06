@@ -14,11 +14,13 @@ type ConnectionStatus = "connecting" | "ready" | "error";
 interface AppProps {
 	user: UserInfo;
 	connect: () => Promise<Channel>;
+	/** True for the participant hosting the session — the sole message submitter. */
+	isHost: boolean;
 	/** Set when hosting — the public relay URL to share with others. */
 	shareUrl?: string;
 }
 
-export function App({ user, connect, shareUrl }: AppProps) {
+export function App({ user, connect, isHost, shareUrl }: AppProps) {
 	const [status, setStatus] = useState<ConnectionStatus>("connecting");
 	const [session, setSession] = useState<CollabSession>();
 
@@ -34,7 +36,7 @@ export function App({ user, connect, shareUrl }: AppProps) {
 					return;
 				}
 				channel = ready;
-				live = createCollabSession(ready, user);
+				live = createCollabSession(ready, user, { isHost });
 				setSession(live);
 				setStatus("ready");
 			})
@@ -47,7 +49,7 @@ export function App({ user, connect, shareUrl }: AppProps) {
 			live?.destroy();
 			channel?.disconnect();
 		};
-	}, [connect, user]);
+	}, [connect, user, isHost]);
 
 	return (
 		<Box flexDirection="column" padding={1}>

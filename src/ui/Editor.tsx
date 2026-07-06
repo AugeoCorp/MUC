@@ -106,6 +106,7 @@ const ESCAPE_PATTERNS: RegExp[] = [
 	/^\x1b\[\d+~/, // tilde keys: 1~ 3~ 4~ 7~ 8~ ...
 	/^\x1b\[[ABCDFH]/, // arrows / End / Home
 	/^\x1bO[ABCDFH]/, // application-mode arrows / End / Home
+	/^\x1b[\r\n]/, // ESC+Enter — Shift+Enter / Option+Enter (the "ready" chord)
 	/^\x1b\x7f/, // Alt+Backspace
 	/^\x1b[bBfF]/, // Meta word nav (ESC b / ESC f)
 ];
@@ -194,10 +195,16 @@ export function applyKey(
 	seq: string,
 	exit: () => void,
 ): void {
-	const insert = (index: number, value: string): void =>
+	// Every edit clears the ready flag: changing the draft means you're no longer
+	// signed off on it. setReady(false) is a no-op when already un-ready.
+	const insert = (index: number, value: string): void => {
 		session.doc.transact(() => session.text.insert(index, value), LOCAL_ORIGIN);
-	const remove = (index: number, count: number): void =>
+		session.setReady(false);
+	};
+	const remove = (index: number, count: number): void => {
 		session.doc.transact(() => session.text.delete(index, count), LOCAL_ORIGIN);
+		session.setReady(false);
+	};
 
 	if (seq === "\x03") {
 		exit(); // Ctrl+C
@@ -209,6 +216,14 @@ export function applyKey(
 	}
 	if (seq === "\x19") {
 		session.undoManager.redo(); // Ctrl+Y
+		return;
+	}
+
+	// Shift+Enter (or Option+Enter) toggles "ready to send". Terminals emit the
+	// chord as ESC+Enter; plain Enter (a bare \r) stays a newline below. When
+	// everyone is ready the host sends the draft (see collab/session.ts).
+	if (seq === "\x1b\r" || seq === "\x1b\n") {
+		session.setReady(!session.isReady());
 		return;
 	}
 
@@ -397,12 +412,15 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 			setVersion((version) => version + 1);
 		};
 		const onAwareness = () => setVersion((version) => version + 1);
+		const onMessages = () => setVersion((version) => version + 1);
 
 		session.text.observe(onText);
 		session.awareness.on("change", onAwareness);
+		session.messages.observe(onMessages);
 		return () => {
 			session.text.unobserve(onText);
 			session.awareness.off("change", onAwareness);
+			session.messages.unobserve(onMessages);
 		};
 	}, [session]);
 
@@ -425,6 +443,13 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 	const text = session.text.toString();
 	const localIndex = session.getLocalIndex();
 	const remoteCursors = session.getRemoteCursors();
+	const sentMessages = session.messages.toArray();
+	const localReady = session.isReady();
+	const participantCount = 1 + remoteCursors.length;
+	const readyCount =
+		(localReady ? 1 : 0) +
+		remoteCursors.filter((cursor) => cursor.ready).length;
+	const everyoneReady = readyCount === participantCount;
 
 	// index -> color for the first remote cursor sitting on each cell.
 	const remoteByIndex = new Map<number, string>();
@@ -491,31 +516,60 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 
 	return (
 		<Box flexDirection="column" marginTop={1}>
+			{sentMessages.length > 0 && (
+				<Box flexDirection="column" marginBottom={1}>
+					<Text color="gray">┄ sent to the agent ┄</Text>
+					{sentMessages.map((message, index) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: the log is append-only, so a row's index never changes
+						<Text key={index} wrap="truncate">
+							<Text color="cyan">▸ </Text>
+							{message}
+						</Text>
+					))}
+				</Box>
+			)}
 			<Text>
 				<Text color="gray">┄ </Text>
 				<Text bold>{DOC_NAME}</Text>
-				<Text color="gray"> ┄ everyone here edits this together</Text>
+				<Text color="gray"> ┄ co-draft it together, ⇧⏎ when you're ready</Text>
 			</Text>
 			<Box
 				borderStyle="round"
-				borderColor="gray"
+				borderColor={everyoneReady ? "green" : "gray"}
 				width={WIDTH + 4}
 				flexDirection="column"
 				paddingX={1}
 			>
 				{rendered}
 			</Box>
+			<Box marginTop={1}>
+				<Text color={everyoneReady ? "green" : "yellow"}>
+					{readyCount}/{participantCount} ready
+				</Text>
+				<Text color="gray">
+					{everyoneReady ? " · sending…" : " · ⇧⏎ toggles ready"}
+				</Text>
+			</Box>
 			<Box marginTop={1} flexDirection="column">
 				<Box>
 					<Text color={session.user.color}>● </Text>
 					<Text bold>{session.user.name}</Text>
-					<Text color="gray"> (you · {localOps.current} edits)</Text>
+					<Text color="gray"> (you · {localOps.current} edits) </Text>
+					{localReady ? (
+						<Text color="green">✓ ready</Text>
+					) : (
+						<Text color="gray">○ drafting</Text>
+					)}
 				</Box>
 				{remoteCursors.map((cursor) => (
 					<Box key={cursor.clientId}>
 						<Text color={cursor.user.color}>● </Text>
-						<Text bold>{cursor.user.name}</Text>
-						<Text color="gray"> (here)</Text>
+						<Text bold>{cursor.user.name} </Text>
+						{cursor.ready ? (
+							<Text color="green">✓ ready</Text>
+						) : (
+							<Text color="gray">○ drafting</Text>
+						)}
 					</Box>
 				))}
 				{remoteCursors.length === 0 && (
