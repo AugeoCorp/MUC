@@ -57,15 +57,29 @@ muc --loopback
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
        ⌃z undo · ⌃y redo · ⌃c quit
+send   ⇧⏎ toggle ready — the host sends once everyone is ready
 ```
+
+> **Note:** `⇧⏎` (Shift+Enter) also works as `⌥⏎` (Option+Enter). It depends on
+> your terminal emitting a distinct sequence for it; if Shift+Enter just inserts
+> a newline, use Option+Enter instead.
 
 ## Develop
 
+`npm run dev` runs the TUI straight from source with `tsx` (no build step).
+Everything after `--` is forwarded to the CLI, so it takes the same arguments as
+the published `muc` binary:
+
 ```bash
 npm install
-npm run dev -- --loopback            # run from source, solo
-npm run dev -- serve --handle echo   # run from source, hosting
+
+npm run dev -- --loopback                     # solo, no network
+npm run dev -- serve --handle echo            # host a session
+npm run dev -- --url <link> --handle nova     # join a host's session
 ```
+
+The `serve` form still needs `cloudflared` on your `PATH` (see
+[Host a session](#host-a-session)).
 
 ## Scripts
 
