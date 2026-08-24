@@ -613,6 +613,9 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 						<Text color="gray"> · </Text>
 						<Text color={cursor.user.color}>● </Text>
 						<Text bold>{cursor.user.name} </Text>
+						{cursor.user.descriptor !== undefined && (
+							<Text color="gray">({cursor.user.descriptor}) </Text>
+						)}
 						{cursor.ready ? (
 							<Text color="green">✓</Text>
 						) : (

@@ -2,7 +2,7 @@
 import { defineCommand, runMain } from "citty";
 import { render } from "ink";
 import { App } from "./app.tsx";
-import type { UserInfo } from "./collab/session.ts";
+import { createCollabSession, type UserInfo } from "./collab/session.ts";
 import {
 	type Channel,
 	createLocalChannel,
@@ -14,11 +14,8 @@ import {
 	relayUrlFor,
 	startCloudflareTunnel,
 } from "./net/tunnel.ts";
-import {
-	type LaunchChoice,
-	Launcher,
-	type SessionPlan,
-} from "./ui/Launcher.tsx";
+import { type LaunchChoice, Launcher } from "./ui/Launcher.tsx";
+import { ServerStatus } from "./ui/ServerStatus.tsx";
 
 // Deliberately no `default` — leaving it undefined is how we tell "the user
 // didn't say" from "the user said anon", and the first case is what we prompt
@@ -28,22 +25,27 @@ const handleArg = {
 	description: "Display name other people see; asked for if omitted.",
 } as const;
 
+const descriptorArg = {
+	type: "string",
+	description:
+		"Free-form note on who you are and why you're here, shown beside your handle.",
+} as const;
+
 const DEFAULT_HANDLE = "anon";
 
-// `muc serve` — host the shared box: stand up a local relay, expose it through a
-// public Cloudflare tunnel, then join your own relay so you can edit too.
+// Never published — a server holds a UserInfo the way it holds a doc, but its
+// presence is deliberately kept off the wire (see collab/session.ts).
+const SERVER_USER: UserInfo = { name: "muc", color: "gray" };
+
+// `muc serve` — run the session, don't join it: a local relay, a public
+// Cloudflare tunnel, and a headless document that does the sending. It takes no
+// handle, because nobody here is drafting.
 const serve = defineCommand({
 	meta: {
 		name: "serve",
-		description:
-			"Host the shared box: start a relay and a public Cloudflare tunnel.",
+		description: "Run a session others join: a relay behind a public tunnel.",
 	},
-	args: { handle: handleArg },
-	async run({ args }) {
-		const handle = await resolveHandle(args.handle, { mode: "serve" });
-		if (handle === undefined) return; // quit at the handle prompt
-		return hostSession(handle);
-	},
+	run: () => serveSession(),
 });
 
 // `muc connect <code>` — join someone else's session with the code they shared.
@@ -58,6 +60,7 @@ const connect = defineCommand({
 			description: "Session code from `muc serve` (e.g. wide-blue-cat-42).",
 		},
 		handle: handleArg,
+		descriptor: descriptorArg,
 	},
 	async run({ args }) {
 		const code = args.code ?? "";
@@ -69,9 +72,9 @@ const connect = defineCommand({
 			return;
 		}
 
-		const handle = await resolveHandle(args.handle, { mode: "connect", code });
+		const handle = await resolveHandle(args.handle, code);
 		if (handle === undefined) return; // quit at the handle prompt
-		return joinSession(code, handle);
+		return joinSession(code, handle, args.descriptor);
 	},
 });
 
@@ -86,13 +89,13 @@ const solo = defineCommand({
 		const openChannel = (): Promise<Channel> =>
 			Promise.resolve(createLocalChannel());
 
-		// Solo has no relay, so that lone user hosts their own session — and no
+		// Solo has no server to do the sending, so the lone user does both — and no
 		// one to read the handle either, so this mode never stops to ask for it.
 		const instance = render(
 			<App
 				user={userFrom(args.handle ?? DEFAULT_HANDLE)}
 				connect={openChannel}
-				isHost
+				role="solo"
 			/>,
 		);
 		return instance.waitUntilExit();
@@ -122,7 +125,7 @@ const start = defineCommand({
 		const choice = await runLauncher(args.handle ?? DEFAULT_HANDLE);
 		if (choice === undefined) return; // quit at the prompt
 		return choice.mode === "serve"
-			? hostSession(choice.handle)
+			? serveSession()
 			: joinSession(choice.code, choice.handle);
 	},
 });
@@ -145,7 +148,13 @@ runMain(main);
 // The session modes, shared by the subcommands and the interactive prompt.
 // ---------------------------------------------------------------------------
 
-async function hostSession(handle: string): Promise<void> {
+/**
+ * Run a session without joining it. The relay carries the frames, the tunnel
+ * makes it reachable, and a headless document rides the same channel everyone
+ * else does — holding the draft and doing the sending, but publishing no
+ * presence, so nobody sees a cursor for it.
+ */
+async function serveSession(): Promise<void> {
 	const relay = await startRelay();
 	const localUrl = `http://localhost:${relay.port}`;
 
@@ -159,28 +168,53 @@ async function hostSession(handle: string): Promise<void> {
 		return;
 	}
 
-	const openChannel = (): Promise<Channel> => createTunnelChannel(localUrl);
-	const instance = render(
-		<App
-			user={userFrom(handle)}
-			connect={openChannel}
-			isHost
-			shareCode={tunnel.code}
-		/>,
-	);
-	await instance.waitUntilExit();
+	let channel: Channel;
+	try {
+		channel = await createTunnelChannel(localUrl);
+	} catch (error) {
+		tunnel.close();
+		await relay.close();
+		console.error(error instanceof Error ? error.message : String(error));
+		process.exitCode = 1;
+		return;
+	}
 
+	const session = createCollabSession(channel, SERVER_USER, { role: "server" });
+	const instance = render(
+		<ServerStatus session={session} shareCode={tunnel.code} />,
+	);
+
+	// Nothing here reads the keyboard, so raw mode is off and ⌃c arrives as a
+	// signal rather than a keystroke. Catch it so the tunnel and relay get shut
+	// down properly instead of being orphaned.
+	const stop = (): void => instance.unmount();
+	process.once("SIGINT", stop);
+	await instance.waitUntilExit();
+	process.off("SIGINT", stop);
+
+	session.destroy();
+	channel.disconnect();
 	tunnel.close();
 	await relay.close();
 }
 
-async function joinSession(code: string, handle: string): Promise<void> {
+async function joinSession(
+	code: string,
+	handle: string,
+	descriptor?: string,
+): Promise<void> {
 	const openChannel = (): Promise<Channel> =>
 		createTunnelChannel(relayUrlFor(code));
 
-	// Whoever joins is a guest, never the submitter — the host sends.
+	// Everyone at the box drafts; the server does the sending. The code comes
+	// along so the footer can show it — anyone here can invite anyone else.
 	const instance = render(
-		<App user={userFrom(handle)} connect={openChannel} isHost={false} />,
+		<App
+			user={userFrom(handle, descriptor)}
+			connect={openChannel}
+			role="participant"
+			shareCode={code}
+		/>,
 	);
 	await instance.waitUntilExit();
 }
@@ -191,26 +225,26 @@ async function joinSession(code: string, handle: string): Promise<void> {
  */
 async function resolveHandle(
 	explicit: string | undefined,
-	plan: SessionPlan,
+	code: string,
 ): Promise<string | undefined> {
 	if (explicit !== undefined) return explicit;
-	// Nothing to ask with, but the mode is already settled — just get going.
+	// Nothing to ask with, but the session is already settled — just get going.
 	if (!isInteractive()) return DEFAULT_HANDLE;
 
-	const choice = await runLauncher(DEFAULT_HANDLE, plan);
-	return choice?.handle;
+	const choice = await runLauncher(DEFAULT_HANDLE, code);
+	return choice?.mode === "connect" ? choice.handle : undefined;
 }
 
 /** Run the prompt; resolves undefined if the user quit instead of choosing. */
 async function runLauncher(
 	defaultHandle: string,
-	plan?: SessionPlan,
+	joining?: string,
 ): Promise<LaunchChoice | undefined> {
 	let choice: LaunchChoice | undefined;
 	const instance = render(
 		<Launcher
 			defaultHandle={defaultHandle}
-			plan={plan}
+			joining={joining}
 			onLaunch={(made) => {
 				choice = made;
 			}}
@@ -228,8 +262,8 @@ function isInteractive(): boolean {
 // A small set of distinct cursor colors, chosen deterministically from the
 // handle so the same name keeps the same color across a session.
 const PALETTE = ["cyan", "magenta", "green", "yellow", "blue", "redBright"];
-function userFrom(name: string): UserInfo {
+function userFrom(name: string, descriptor?: string): UserInfo {
 	let sum = 0;
 	for (const character of name) sum += character.charCodeAt(0);
-	return { name, color: PALETTE[sum % PALETTE.length] };
+	return { name, color: PALETTE[sum % PALETTE.length], descriptor };
 }

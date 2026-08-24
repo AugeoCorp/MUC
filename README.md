@@ -28,22 +28,28 @@ muc
 
 You pick **Host a session** or **Join a session**, give the code if you're
 joining, and say what handle everyone else should see. The subcommands below are
-the same thing with the answers filled in ahead of time — and any of them will
-still ask for a handle if you don't pass `--handle`.
+the same thing with the answers filled in ahead of time.
 
 ## Host a session
 
-Hosting stands up a local relay, exposes it through a free Cloudflare Quick
-Tunnel, and drops you straight into the shared box. It needs the `cloudflared`
-binary on your `PATH`:
+Hosting **runs** the session rather than joining it. It stands up a local relay,
+exposes it through a free Cloudflare Quick Tunnel, and holds the document —
+including doing the sending once everyone's ready — but it never appears in the
+room and has no text box of its own. It needs the `cloudflared` binary on your
+`PATH`:
 
 ```bash
 brew install cloudflared          # one-time, if you don't already have it
-muc serve --handle echo
+muc serve
 ```
 
 `muc serve` prints a **session code** — one word like `wide-blue-cat-42`. Share
-that with whoever you want editing alongside you; it's all they need.
+that with whoever you want drafting; it's all they need. The screen then shows
+who's connected, who's ready, and what's been sent.
+
+Hosting takes no `--handle`, because nobody is drafting under it. To host
+**and** take part, run `muc serve` in one terminal and `muc connect <code>` in
+another.
 
 ## Join a session
 
@@ -53,8 +59,23 @@ Pass the code the host gave you:
 muc connect wide-blue-cat-42 --handle nova
 ```
 
-Everyone in the session sees the same text and each other's cursors, and late
-joiners receive the full document automatically.
+You'll be asked for a handle if you leave `--handle` off. Everyone in the
+session sees the same text and each other's cursors, and late joiners receive
+the full document automatically.
+
+### Saying who you are
+
+`--descriptor` adds a free-form note shown beside your handle in everyone's
+participant list. It's meant for participants who aren't people — an agent can
+say what it is and what it's here for:
+
+```bash
+muc connect wide-blue-cat-42 \
+  --handle reviewer \
+  --descriptor "code-review agent, watching for auth changes"
+```
+
+Others then see `● reviewer (code-review agent, watching for auth changes) ○`.
 
 ## Edit solo
 
@@ -70,7 +91,7 @@ muc solo
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
        ⌃z undo · ⌃y redo · ⌃c quit
-send   ⌃s toggle ready — the host sends once everyone is ready
+send   ⌃s toggle ready — the server sends once everyone is ready
 ```
 
 > **Note:** `⌃s` (Ctrl+S) is the reliable "ready" chord and works in every
@@ -89,8 +110,8 @@ npm install
 
 npm run dev                                   # ask what to do
 npm run dev -- solo                           # solo, no network
-npm run dev -- serve --handle echo            # host a session
-npm run dev -- connect <code> --handle nova   # join a host's session
+npm run dev -- serve                          # run a session (no text box)
+npm run dev -- connect <code> --handle nova   # join a session
 ```
 
 The `serve` form still needs `cloudflared` on your `PATH` (see

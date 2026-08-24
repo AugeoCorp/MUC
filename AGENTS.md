@@ -30,10 +30,16 @@ peer-to-peer.
   to share. Quick Tunnels always live at `<code>.trycloudflare.com`, so the
   subdomain alone identifies the session — `relayUrlFor` (`src/net/tunnel.ts`)
   expands it back into a URL on the joining side (`muc connect <code>`).
-- Everyone — the host included — joins as a client over a **`Channel`**
-  (`src/net/channel.ts`), which short-polls the relay for new frames and POSTs
-  its own. Long-lived streaming is deliberately avoided; a quick tunnel won't
-  reliably forward one.
+- **`serve` runs the session; it doesn't join it.** The server opens a `Channel`
+  to its own relay like anyone else, but its session has `role: "server"`
+  (`src/collab/session.ts`): it publishes no awareness, so no one sees a cursor
+  for it and it isn't counted in "everyone ready" — and it is the single writer
+  that submits the draft once the real participants are all ready. `muc solo`
+  uses `role: "solo"`, which both drafts and submits; everyone else is a
+  `participant`, which only drafts.
+- Everyone else joins as a client over a **`Channel`** (`src/net/channel.ts`),
+  which short-polls the relay for new frames and POSTs its own. Long-lived
+  streaming is deliberately avoided; a quick tunnel won't reliably forward one.
 - The shared state lives in `src/collab/session.ts`: local edits and cursors are
   encoded as base64 frames and ridden over the channel, and inbound frames are
   applied to the Yjs doc. Because the relay replays its whole log to a late
@@ -75,6 +81,7 @@ src/
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
 │   ├── Launcher.tsx        # bare `muc`: asks mode / code / handle before starting
+│   ├── ServerStatus.tsx    # what `muc serve` shows: code, who's here, what's sent
 │   └── Title.tsx           # the header line
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay

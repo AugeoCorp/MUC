@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
 	type CollabSession,
 	createCollabSession,
+	type Role,
 	type UserInfo,
 } from "./collab/session.ts";
 import type { Channel } from "./net/channel.ts";
@@ -14,13 +15,16 @@ type ConnectionStatus = "connecting" | "ready" | "error";
 interface AppProps {
 	user: UserInfo;
 	connect: () => Promise<Channel>;
-	/** True for the participant hosting the session — the sole message submitter. */
-	isHost: boolean;
-	/** Set when hosting — the session code to share with others. */
+	/**
+	 * Whoever is at the box: a `participant` drafts and lets the server send,
+	 * `solo` does both. A server never renders an App at all.
+	 */
+	role: Extract<Role, "participant" | "solo">;
+	/** The session code, shown in the footer so anyone here can invite others. */
 	shareCode?: string;
 }
 
-export function App({ user, connect, isHost, shareCode }: AppProps) {
+export function App({ user, connect, role, shareCode }: AppProps) {
 	const [status, setStatus] = useState<ConnectionStatus>("connecting");
 	const [session, setSession] = useState<CollabSession>();
 
@@ -36,7 +40,7 @@ export function App({ user, connect, isHost, shareCode }: AppProps) {
 					return;
 				}
 				channel = ready;
-				live = createCollabSession(ready, user, { isHost });
+				live = createCollabSession(ready, user, { role });
 				setSession(live);
 				setStatus("ready");
 			})
@@ -49,7 +53,7 @@ export function App({ user, connect, isHost, shareCode }: AppProps) {
 			live?.destroy();
 			channel?.disconnect();
 		};
-	}, [connect, user, isHost]);
+	}, [connect, user, role]);
 
 	return (
 		// paddingX only — vertical padding is two rows the box could be using.

@@ -13,20 +13,23 @@ import { type ReactElement, useState } from "react";
 import { isSessionCode } from "../net/tunnel.ts";
 import { Title } from "./Title.tsx";
 
-/** What to launch — everything but who's launching it. */
-export type SessionPlan = { mode: "serve" } | { mode: "connect"; code: string };
-
-/** A plan plus the handle, i.e. everything a session needs to start. */
-export type LaunchChoice = SessionPlan & { handle: string };
+/**
+ * Everything a session needs to start. Hosting carries no handle: the server
+ * runs the relay and does the sending, but never appears in the room, so there
+ * is no name for it to go by.
+ */
+export type LaunchChoice =
+	| { mode: "serve" }
+	| { mode: "connect"; code: string; handle: string };
 
 interface LauncherProps {
 	/** Pre-fills the handle field. */
 	defaultHandle: string;
 	/**
-	 * Set when the command line already decided the mode (`muc serve`,
-	 * `muc connect <code>`) — the prompt then asks for the handle alone.
+	 * Set when the command line already picked a session to join
+	 * (`muc connect <code>`) — the prompt then asks for the handle alone.
 	 */
-	plan?: SessionPlan;
+	joining?: string;
 	/** Called once with the finished choice; the prompt exits straight after. */
 	onLaunch: (choice: LaunchChoice) => void;
 }
@@ -35,7 +38,7 @@ const MODES = [
 	{
 		mode: "serve",
 		label: "Host a session",
-		hint: "you'll get a code to share",
+		hint: "runs the relay — you won't be drafting",
 	},
 	{
 		mode: "connect",
@@ -49,17 +52,24 @@ type Step = "mode" | "code" | "handle";
 
 export function Launcher({
 	defaultHandle,
-	plan,
+	joining,
 	onLaunch,
 }: LauncherProps): ReactElement {
 	const { exit } = useApp();
 	const [step, setStep] = useState<Step>(
-		plan === undefined ? "mode" : "handle",
+		joining === undefined ? "mode" : "handle",
 	);
-	const [mode, setMode] = useState<Mode>(plan?.mode ?? "serve");
-	const [code, setCode] = useState(plan?.mode === "connect" ? plan.code : "");
+	const [mode, setMode] = useState<Mode>(
+		joining === undefined ? "serve" : "connect",
+	);
+	const [code, setCode] = useState(joining ?? "");
 	const [handle, setHandle] = useState(defaultHandle);
 	const [problem, setProblem] = useState<string>();
+
+	function launch(choice: LaunchChoice): void {
+		onLaunch(choice);
+		exit();
+	}
 
 	useInput((input, key) => {
 		setProblem(undefined);
@@ -69,7 +79,11 @@ export function Launcher({
 				setMode((current) => (current === "serve" ? "connect" : "serve"));
 				return;
 			}
-			if (key.return) setStep(mode === "connect" ? "code" : "handle");
+			// Hosting asks nothing else — there's no handle to collect.
+			if (key.return) {
+				if (mode === "serve") launch({ mode: "serve" });
+				else setStep("code");
+			}
 			return;
 		}
 
@@ -77,11 +91,9 @@ export function Launcher({
 		const value = step === "code" ? code : handle;
 		const setValue = step === "code" ? setCode : setHandle;
 
-		// Nothing to step back to when the command line already fixed the plan.
+		// Nothing to step back to when the command line already picked the session.
 		if (key.escape) {
-			if (plan === undefined) {
-				setStep(step === "handle" && mode === "connect" ? "code" : "mode");
-			}
+			if (joining === undefined) setStep(step === "handle" ? "code" : "mode");
 			return;
 		}
 		if (key.return) {
@@ -95,13 +107,11 @@ export function Launcher({
 				setStep("handle");
 				return;
 			}
-			const name = handle.trim() === "" ? defaultHandle : handle.trim();
-			onLaunch(
-				mode === "serve"
-					? { mode, handle: name }
-					: { mode, code: code.trim(), handle: name },
-			);
-			exit();
+			launch({
+				mode: "connect",
+				code: code.trim(),
+				handle: handle.trim() === "" ? defaultHandle : handle.trim(),
+			});
 			return;
 		}
 		if (key.backspace || key.delete) {
@@ -156,7 +166,7 @@ export function Launcher({
 					<Text color="gray">
 						{step === "mode"
 							? "↑↓ choose · ⏎ confirm · ⌃c quit"
-							: plan === undefined
+							: joining === undefined
 								? "⏎ confirm · esc back · ⌃c quit"
 								: "⏎ confirm · ⌃c quit"}
 					</Text>

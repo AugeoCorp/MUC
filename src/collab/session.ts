@@ -23,7 +23,24 @@ export interface UserInfo {
 	name: string;
 	/** Any ink-compatible color (named color or hex). */
 	color: string;
+	/**
+	 * Free-form note on who this participant is and why they're here, shown
+	 * beside their name. Meant for participants who aren't people: an agent can
+	 * say what it is and what it's watching the draft for.
+	 */
+	descriptor?: string;
 }
+
+/**
+ * What a session is here to do. Two questions, and each role answers them
+ * differently: does it appear in the room, and does it do the sending?
+ *
+ * - `participant` — drafts, and is seen drafting. Never sends.
+ * - `server` — holds the document and sends, but publishes no presence, so no
+ *   one sees a cursor for it and it isn't counted in "everyone ready".
+ * - `solo` — alone with the box (`muc solo`), so it does both.
+ */
+export type Role = "participant" | "server" | "solo";
 
 /** The collaborative text lives under this key in the doc. */
 export const CONTENT_KEY = "content";
@@ -64,7 +81,10 @@ export interface CollabSession {
 	setReady(ready: boolean): void;
 	/** Whether the local user is currently ready. */
 	isReady(): boolean;
-	/** Whether every present participant — the local user included — is ready. */
+	/**
+	 * Whether every present participant is ready. The local user counts too,
+	 * except for a `server`, which has no draft of its own to sign off on.
+	 */
 	isEveryoneReady(): boolean;
 	/** Tear everything down: drop presence and destroy the doc/awareness. */
 	destroy(): void;
@@ -84,8 +104,9 @@ const fromBase64 = (text: string): Uint8Array =>
 export function createCollabSession(
 	channel: Channel,
 	user: UserInfo,
-	options: { isHost?: boolean } = {},
+	options: { role?: Role } = {},
 ): CollabSession {
+	const role = options.role ?? "participant";
 	const doc = new Y.Doc();
 	const text = doc.getText(CONTENT_KEY);
 	const messages = doc.getArray<string>(MESSAGES_KEY);
@@ -97,6 +118,9 @@ export function createCollabSession(
 	let localCursor = encodeCursor(text, text.length);
 	let localReady = false;
 	function publishLocalState(): void {
+		// A server watches the room without being in it: publishing nothing is
+		// what keeps it out of everyone's cursor list and ready count.
+		if (role === "server") return;
 		awareness.setLocalState({ user, cursor: localCursor, ready: localReady });
 	}
 
@@ -143,8 +167,15 @@ export function createCollabSession(
 	}
 
 	function isEveryoneReady(): boolean {
+		const remote = getRemoteCursors();
+		// The server holds no draft, so it has no flag to add — it waits on the
+		// people who do. An empty room is never ready, or it would fire the moment
+		// the last person left.
+		if (role === "server") {
+			return remote.length > 0 && remote.every((cursor) => cursor.ready);
+		}
 		if (!localReady) return false;
-		return getRemoteCursors().every((cursor) => cursor.ready);
+		return remote.every((cursor) => cursor.ready);
 	}
 
 	// --- The wire: relay binary doc updates over the channel -------------------
@@ -202,12 +233,13 @@ export function createCollabSession(
 	});
 
 	// --- Ready → send ---------------------------------------------------------
-	// The host is the single writer that turns "everyone ready" into a sent
+	// One session is the single writer that turns "everyone ready" into a sent
 	// message: it appends the trimmed draft to the shared log and clears the
-	// composer, both in one transaction that syncs to every peer. Only the host
-	// acts, so the log never gains duplicate copies from a simultaneous trigger.
+	// composer, both in one transaction that syncs to every peer. Exactly one
+	// acts, so the log never gains duplicate copies from a simultaneous trigger —
+	// the server where there is one, and the lone user in `muc solo`.
 	function submitIfEveryoneReady(): void {
-		if (options.isHost !== true) return;
+		if (role === "participant") return;
 		if (!isEveryoneReady()) return;
 		const draft = text.toString().trim();
 		if (draft === "") return;
