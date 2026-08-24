@@ -117,6 +117,41 @@ describe("agent daemon", () => {
 		expect(idleFeed.events).toEqual([]);
 	});
 
+	it("attributes a remote edit to the human who made it", async () => {
+		const fixture = await createFixture();
+		fixture.humanSession.doc.transact(() =>
+			fixture.humanSession.text.insert(0, "hi from kirby"),
+		);
+		// Text events coalesce for 300ms; long-poll until the event arrives.
+		const response = await fetch(`${fixture.base}/events?since=0&wait=2000`);
+		const feed = (await response.json()) as {
+			events: Array<{ type: string; edits?: unknown[] }>;
+		};
+		const textEvent = feed.events.find((event) => event.type === "text");
+		expect(textEvent?.edits).toEqual([
+			expect.objectContaining({
+				origin: "remote",
+				by: { name: "kirby", kind: "human" },
+			}),
+		]);
+	});
+
+	it("attributes a local edit to the daemon's own user", async () => {
+		const fixture = await createFixture();
+		await command(fixture, { op: "appendLine", line: "scribe: present" });
+		const response = await fetch(`${fixture.base}/events?since=0&wait=2000`);
+		const feed = (await response.json()) as {
+			events: Array<{ type: string; edits?: unknown[] }>;
+		};
+		const textEvent = feed.events.find((event) => event.type === "text");
+		expect(textEvent?.edits).toEqual([
+			expect.objectContaining({
+				origin: "local",
+				by: { name: "scribe", kind: "agent" },
+			}),
+		]);
+	});
+
 	it("emits a roster event when the peer readies up", async () => {
 		const fixture = await createFixture();
 		fixture.humanSession.setReady(true);

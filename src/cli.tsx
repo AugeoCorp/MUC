@@ -138,7 +138,17 @@ const agent = defineCommand({
 
 		// Headless means no prompt to fall back on — take the default silently.
 		const handle = args.handle ?? DEFAULT_HANDLE;
-		const channel = await createTunnelChannel(relayUrlFor(code));
+
+		let channel: Channel;
+		try {
+			channel = await createTunnelChannel(relayUrlFor(code));
+		} catch (error) {
+			console.error(
+				`Couldn't reach session "${code}": ${error instanceof Error ? error.message : String(error)}`,
+			);
+			process.exitCode = 1;
+			return;
+		}
 		const session = createCollabSession(
 			channel,
 			userFrom(handle, args.descriptor, "agent"),

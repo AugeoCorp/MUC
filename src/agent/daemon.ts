@@ -16,6 +16,7 @@ import {
 	type CollabSession,
 	NETWORK_ORIGIN,
 	type RemoteCursor,
+	type UserInfo,
 } from "../collab/session.ts";
 import {
 	appendLine,
@@ -45,6 +46,12 @@ interface AgentEvent {
 	ts: string;
 	type: "text" | "roster" | "message";
 	[key: string]: unknown;
+}
+
+/** Who made an edit, when the writer can be named. */
+interface EditAttribution {
+	name: string;
+	kind: "human" | "agent";
 }
 
 const EVENT_BUFFER_LIMIT = 500;
@@ -80,12 +87,19 @@ export function startAgentDaemon(
 
 	// Text changes: coalesce bursts (remote typing arrives keystroke-by-
 	// keystroke) into one event per window, keeping every delta.
-	let pendingEdits: Array<{ origin: "local" | "remote"; delta: unknown }> = [];
+	let pendingEdits: Array<{
+		origin: "local" | "remote";
+		delta: unknown;
+		by?: EditAttribution;
+	}> = [];
 	let textTimer: NodeJS.Timeout | undefined;
 	const onText = (event: Y.YTextEvent, transaction: Y.Transaction): void => {
+		const origin =
+			transaction.origin === NETWORK_ORIGIN ? ("remote" as const) : "local";
 		pendingEdits.push({
-			origin: transaction.origin === NETWORK_ORIGIN ? "remote" : "local",
+			origin,
 			delta: event.changes.delta,
+			by: attributeEdit(origin, transaction),
 		});
 		if (textTimer === undefined) {
 			textTimer = setTimeout(() => {
@@ -118,11 +132,45 @@ export function startAgentDaemon(
 	};
 	session.messages.observe(onMessages);
 
+	// Who made this edit. Local transactions are our own user. A remote
+	// transaction names its writer through its state vectors — new structs land
+	// under the originating clientID — resolved to a name via awareness. When
+	// that fails (a delete-only update adds no structs; backlog replay outruns
+	// presence; the presence-less server clears the composer), the edit carries
+	// no `by` rather than a guess.
+	function attributeEdit(
+		origin: "local" | "remote",
+		transaction: Y.Transaction,
+	): EditAttribution | undefined {
+		if (origin === "local") {
+			return {
+				name: session.user.name,
+				kind: session.user.kind ?? "human",
+			};
+		}
+		const writerIds: number[] = [];
+		transaction.afterState.forEach((clock, clientId) => {
+			if (transaction.beforeState.get(clientId) !== clock) {
+				writerIds.push(clientId);
+			}
+		});
+		if (writerIds.length !== 1) return undefined; // nobody or ambiguous
+		const state = session.awareness.getStates().get(writerIds[0]) as
+			| { user?: UserInfo }
+			| undefined;
+		if (state?.user === undefined) return undefined;
+		return {
+			name: state.user.name,
+			kind: state.user.kind ?? "human",
+		};
+	}
+
 	function participants() {
 		return session.getRemoteCursors().map((cursor: RemoteCursor) => ({
 			name: cursor.user.name,
 			color: cursor.user.color,
 			kind: cursor.user.kind ?? "human",
+			descriptor: cursor.user.descriptor,
 			index: cursor.index,
 			ready: cursor.ready,
 		}));
