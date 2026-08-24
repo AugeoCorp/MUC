@@ -12,15 +12,25 @@
 // Backspace as forward-delete. We need the exact escape sequences for line- and
 // word-level editing.
 
-import { Box, Text, useApp, useStdin } from "ink";
+import { Box, Text, useApp, useStdin, useWindowSize } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
 import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
 
-const WIDTH = 60; // max characters per visual row
-const VISIBLE_ROWS = 8; // fixed number of text rows shown
 const DOC_NAME = "shared.txt";
+
+// The box spans the terminal: only the app's own padding (1 each side) sits
+// between the draft and the edge, since the rules above and below it have no
+// sides to take up room.
+const CHROME_COLUMNS = 2;
+const MIN_WIDTH = 20;
+
+// The box grows with the draft rather than sitting at a fixed height: never
+// shorter than MIN_ROWS, never taller than this share of the terminal. Past
+// that it stops growing and scrolls to keep the local cursor in view.
+const MIN_ROWS = 3;
+const MAX_HEIGHT_SHARE = 2 / 3;
 
 // ---------------------------------------------------------------------------
 // Text geometry: split into visual rows honoring newlines + width wrapping.
@@ -188,12 +198,14 @@ const END_KEYS = new Set(["\x05", "\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 /**
  * Translate one key token into an edit / cursor move against the session. All
  * edits go through the local Y.Text in a transaction tagged LOCAL_ORIGIN; the
- * cursor is republished to awareness as a relative position.
+ * cursor is republished to awareness as a relative position. `width` is the
+ * current text column, which only up / down need — they move by visual row.
  */
 export function applyKey(
 	session: CollabSession,
 	seq: string,
 	exit: () => void,
+	width: number,
 ): void {
 	// Every edit clears the ready flag: changing the draft means you're no longer
 	// signed off on it. setReady(false) is a no-op when already un-ready.
@@ -335,7 +347,7 @@ export function applyKey(
 					session.publishCursor(arrow.dir === "up" ? 0 : len);
 					return;
 				}
-				const rows = computeRows(text, WIDTH);
+				const rows = computeRows(text, width);
 				const r = rowOfIndex(rows, idx);
 				const col = idx - rows[r].start;
 				const targetRow = Math.max(
@@ -400,9 +412,17 @@ function cell(
 	return <Text key={key}>{display}</Text>;
 }
 
-export function Editor({ session }: { session: CollabSession }): ReactElement {
+interface EditorProps {
+	session: CollabSession;
+	/** Set when hosting — shown in the footer so others can be invited. */
+	shareCode?: string;
+}
+
+export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const { exit } = useApp();
 	const { stdin, setRawMode } = useStdin();
+	const { rows: terminalRows, columns: terminalColumns } = useWindowSize();
+	const textWidth = Math.max(MIN_WIDTH, terminalColumns - CHROME_COLUMNS);
 	const [, setVersion] = useState(0);
 	const localOps = useRef(0);
 
@@ -433,14 +453,16 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 		setRawMode(true);
 		const onData = (chunk: Buffer | string) => {
 			const data = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-			tokenize(data).forEach((token) => applyKey(session, token, exit));
+			tokenize(data).forEach((token) =>
+				applyKey(session, token, exit, textWidth),
+			);
 		};
 		stdin.on("data", onData);
 		return () => {
 			stdin.off("data", onData);
 			setRawMode(false);
 		};
-	}, [stdin, setRawMode, exit, session]);
+	}, [stdin, setRawMode, exit, session, textWidth]);
 
 	// ---- Render straight from Yjs ----
 	const text = session.text.toString();
@@ -462,23 +484,30 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 		}
 	});
 
-	const rows = computeRows(text, WIDTH);
+	const rows = computeRows(text, textWidth);
 
-	// Vertical window so the local cursor stays in view in the fixed-height box.
+	// Height follows the draft, clamped at both ends (see MIN_ROWS above).
+	const maxRows = Math.max(
+		MIN_ROWS,
+		Math.floor(terminalRows * MAX_HEIGHT_SHARE),
+	);
+	const visibleRows = Math.min(Math.max(rows.length, MIN_ROWS), maxRows);
+
+	// Vertical window so the local cursor stays in view once the box stops growing.
 	const localRow = rowOfIndex(rows, localIndex);
 	let startRow = 0;
-	if (rows.length > VISIBLE_ROWS) {
+	if (rows.length > visibleRows) {
 		startRow = Math.max(
 			0,
 			Math.min(
-				localRow - Math.floor(VISIBLE_ROWS / 2),
-				rows.length - VISIBLE_ROWS,
+				localRow - Math.floor(visibleRows / 2),
+				rows.length - visibleRows,
 			),
 		);
 	}
 
 	const rendered: ReactNode[] = [];
-	for (let vr = 0; vr < VISIBLE_ROWS; vr++) {
+	for (let vr = 0; vr < visibleRows; vr++) {
 		const globalRow = startRow + vr;
 		const row = rows[globalRow];
 		if (!row) {
@@ -518,9 +547,9 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 	}
 
 	return (
-		<Box flexDirection="column" marginTop={1}>
+		<Box flexDirection="column">
 			{sentMessages.length > 0 && (
-				<Box flexDirection="column" marginBottom={1}>
+				<Box flexDirection="column">
 					<Text color="gray">┄ sent to the agent ┄</Text>
 					{sentMessages.map((message, index) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: the log is append-only, so a row's index never changes
@@ -534,55 +563,69 @@ export function Editor({ session }: { session: CollabSession }): ReactElement {
 			<Text>
 				<Text color="gray">┄ </Text>
 				<Text bold>{DOC_NAME}</Text>
-				<Text color="gray"> ┄ co-draft it together, ⌃s when you're ready</Text>
+				<Text color="gray"> ┄</Text>
 			</Text>
+			{/* Heavy rules above and below, no sides — the draft runs the full
+			    width of the terminal between them. */}
 			<Box
-				borderStyle="round"
+				borderStyle="bold"
+				borderLeft={false}
+				borderRight={false}
 				borderColor={everyoneReady ? "green" : "gray"}
-				width={WIDTH + 4}
+				width={textWidth}
 				flexDirection="column"
-				paddingX={1}
 			>
 				{rendered}
 			</Box>
-			<Box marginTop={1}>
+			{/* The footer: where the draft stands, then who's here, then the keys.
+			    The invite sits beside the ready count because both are things you
+			    act on — one tells you who you're waiting for, the other how to
+			    stop waiting. */}
+			<Text wrap="truncate-end">
 				<Text color={everyoneReady ? "green" : "yellow"}>
 					{readyCount}/{participantCount} ready
 				</Text>
 				<Text color="gray">
 					{everyoneReady ? " · sending…" : " · ⌃s toggles ready"}
 				</Text>
-			</Box>
-			<Box marginTop={1} flexDirection="column">
-				<Box>
-					<Text color={session.user.color}>● </Text>
-					<Text bold>{session.user.name}</Text>
-					<Text color="gray"> (you · {localOps.current} edits) </Text>
-					{localReady ? (
-						<Text color="green">✓ ready</Text>
-					) : (
-						<Text color="gray">○ drafting</Text>
-					)}
-				</Box>
+				{shareCode !== undefined && (
+					<>
+						<Text color="gray"> · invite: </Text>
+						<Text color="greenBright" bold>
+							muc connect {shareCode}
+						</Text>
+					</>
+				)}
+			</Text>
+			{/* Everyone on one row rather than one row each: ✓ / ○ carry the ready
+			    state that the count above spells out in words. */}
+			<Text wrap="truncate-end">
+				<Text color={session.user.color}>● </Text>
+				<Text bold>{session.user.name}</Text>
+				<Text color="gray"> (you · {localOps.current} edits) </Text>
+				{localReady ? (
+					<Text color="green">✓</Text>
+				) : (
+					<Text color="gray">○</Text>
+				)}
 				{remoteCursors.map((cursor) => (
-					<Box key={cursor.clientId}>
+					<Text key={cursor.clientId}>
+						<Text color="gray"> · </Text>
 						<Text color={cursor.user.color}>● </Text>
 						<Text bold>{cursor.user.name} </Text>
 						{cursor.ready ? (
-							<Text color="green">✓ ready</Text>
+							<Text color="green">✓</Text>
 						) : (
-							<Text color="gray">○ drafting</Text>
+							<Text color="gray">○</Text>
 						)}
-					</Box>
+					</Text>
 				))}
 				{remoteCursors.length === 0 && (
-					<Text color="gray"> …no one else here yet — share the link.</Text>
+					<Text color="gray"> · no one else here yet</Text>
 				)}
-			</Box>
-			<Text color="gray">move: ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc</Text>
-			<Text color="gray">
-				edit: ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline · ⌃z undo · ⌃y redo · ⌃c
-				quit
+			</Text>
+			<Text color="gray" wrap="truncate-end">
+				←→ move · ⌥←→ word · ⌘←→ line · ⌫ delete · ⌃z/⌃y undo · ⌃c quit
 			</Text>
 		</Box>
 	);

@@ -74,6 +74,7 @@ src/
 ├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
+│   ├── Launcher.tsx        # bare `muc`: asks mode / code / handle before starting
 │   └── Title.tsx           # the header line
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay

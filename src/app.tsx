@@ -52,17 +52,14 @@ export function App({ user, connect, isHost, shareCode }: AppProps) {
 	}, [connect, user, isHost]);
 
 	return (
-		<Box flexDirection="column" padding={1}>
+		// paddingX only — vertical padding is two rows the box could be using.
+		<Box flexDirection="column" paddingX={1}>
 			<Title />
-			{shareCode !== undefined && (
-				<Text color="greenBright">
-					Invite others — they run: <Text bold>muc connect {shareCode}</Text>
-				</Text>
-			)}
 			{status === "connecting" && <Text color="yellow">Connecting…</Text>}
 			{status === "error" && <Text color="red">Could not connect.</Text>}
 			{status === "ready" && session !== undefined && (
-				<Editor session={session} />
+				// The code rides down to the Editor's footer, next to the ready count.
+				<Editor session={session} shareCode={shareCode} />
 			)}
 		</Box>
 	);

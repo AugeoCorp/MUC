@@ -18,6 +18,19 @@ npm install -g @augeo/muc     # then run `muc`
 npx @augeo/muc --help
 ```
 
+## Start
+
+Run it with no arguments and it asks what you want:
+
+```bash
+muc
+```
+
+You pick **Host a session** or **Join a session**, give the code if you're
+joining, and say what handle everyone else should see. The subcommands below are
+the same thing with the answers filled in ahead of time — and any of them will
+still ask for a handle if you don't pass `--handle`.
+
 ## Host a session
 
 Hosting stands up a local relay, exposes it through a free Cloudflare Quick
@@ -74,6 +87,7 @@ the published `muc` binary:
 ```bash
 npm install
 
+npm run dev                                   # ask what to do
 npm run dev -- solo                           # solo, no network
 npm run dev -- serve --handle echo            # host a session
 npm run dev -- connect <code> --handle nova   # join a host's session
