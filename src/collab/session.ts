@@ -29,6 +29,17 @@ export interface UserInfo {
 	 * say what it is and what it's watching the draft for.
 	 */
 	descriptor?: string;
+	/**
+	 * Whether this participant is a person or a driven agent. Agents never gate
+	 * the ready-to-send quorum. Absent means "human" — older clients that don't
+	 * send a kind must still be able to hold up the send.
+	 */
+	kind?: "human" | "agent";
+}
+
+/** True when a participant should count toward the ready quorum. */
+export function isHuman(user: UserInfo): boolean {
+	return user.kind !== "agent";
 }
 
 /**
@@ -82,8 +93,9 @@ export interface CollabSession {
 	/** Whether the local user is currently ready. */
 	isReady(): boolean;
 	/**
-	 * Whether every present participant is ready. The local user counts too,
-	 * except for a `server`, which has no draft of its own to sign off on.
+	 * Whether every present human is ready. The local user counts too, except
+	 * for a `server` (no draft of its own to sign off on) or an agent (agents
+	 * never gate the send). A room with no humans in it is never ready.
 	 */
 	isEveryoneReady(): boolean;
 	/** Tear everything down: drop presence and destroy the doc/awareness. */
@@ -167,15 +179,22 @@ export function createCollabSession(
 	}
 
 	function isEveryoneReady(): boolean {
-		const remote = getRemoteCursors();
-		// The server holds no draft, so it has no flag to add — it waits on the
-		// people who do. An empty room is never ready, or it would fire the moment
-		// the last person left.
-		if (role === "server") {
-			return remote.length > 0 && remote.every((cursor) => cursor.ready);
+		// Only humans gate the send: agents draft alongside everyone else but
+		// never hold a message up.
+		const remoteHumans = getRemoteCursors().filter((cursor) =>
+			isHuman(cursor.user),
+		);
+		// A server holds no draft, so it has no flag of its own to add — it waits
+		// on the people who do. An agent is the same: it can't sign off for
+		// anyone. In both cases some human must actually be present, or the
+		// quorum would pass vacuously the moment the last person left.
+		if (role === "server" || !isHuman(user)) {
+			return (
+				remoteHumans.length > 0 && remoteHumans.every((cursor) => cursor.ready)
+			);
 		}
 		if (!localReady) return false;
-		return remote.every((cursor) => cursor.ready);
+		return remoteHumans.every((cursor) => cursor.ready);
 	}
 
 	// --- The wire: relay binary doc updates over the channel -------------------
@@ -203,6 +222,11 @@ export function createCollabSession(
 			applyAwarenessUpdate(awareness, fromBase64(message.d), NETWORK_ORIGIN);
 		}
 	});
+
+	// Announce ourselves now that the wire is attached — until a participant's
+	// user info reaches the channel, peers can't see them, and an invisible
+	// human can't gate the ready quorum (the host would submit as if alone).
+	publishLocalState();
 
 	// --- Local-only undo/redo -------------------------------------------------
 	// Scoped to LOCAL_ORIGIN so undo/redo never touch a peer's edits. Yjs still

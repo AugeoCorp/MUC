@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty";
 import { render } from "ink";
+import { startAgentDaemon } from "./agent/index.ts";
 import { App } from "./app.tsx";
 import { createCollabSession, type UserInfo } from "./collab/session.ts";
 import {
@@ -102,6 +103,72 @@ const solo = defineCommand({
 	},
 });
 
+// `muc agent <code>` — join headless, as an AI agent's hands: no TUI, just a
+// localhost control API (POST /cmd, GET /state, GET /events) the agent drives.
+// An agent is an ordinary participant on the wire, but its kind marks it so it
+// never gates the ready quorum — and it never hosts.
+const agent = defineCommand({
+	meta: {
+		name: "agent",
+		description:
+			"Join headless as an agent: exposes a localhost control API instead of a TUI.",
+	},
+	args: {
+		code: {
+			type: "positional",
+			description: "Session code from `muc serve` (e.g. wide-blue-cat-42).",
+		},
+		handle: handleArg,
+		descriptor: descriptorArg,
+		port: {
+			type: "string",
+			description: "Control API port; 0 picks a free one.",
+			default: "0",
+		},
+	},
+	async run({ args }) {
+		const code = args.code ?? "";
+		if (!isSessionCode(code)) {
+			console.error(
+				`"${code}" doesn't look like a session code. Expected a single word like wide-blue-cat-42.`,
+			);
+			process.exitCode = 1;
+			return;
+		}
+
+		// Headless means no prompt to fall back on — take the default silently.
+		const handle = args.handle ?? DEFAULT_HANDLE;
+		const channel = await createTunnelChannel(relayUrlFor(code));
+		const session = createCollabSession(
+			channel,
+			userFrom(handle, args.descriptor, "agent"),
+			{ role: "participant" },
+		);
+
+		let shutdown = (): void => {};
+		const closed = new Promise<void>((resolve) => {
+			shutdown = resolve;
+		});
+		const daemon = await startAgentDaemon(session, {
+			port: Number.parseInt(args.port, 10),
+			onQuit: () => shutdown(),
+		});
+		process.on("SIGINT", () => shutdown());
+		process.on("SIGTERM", () => shutdown());
+
+		// One machine-readable line so the driving agent can find the API.
+		console.log(JSON.stringify({ listening: daemon.port, handle, code }));
+
+		await closed;
+		await daemon.close();
+		// destroy() drops our presence with a final frame; give it a beat to
+		// flush before the poll loop stops.
+		session.destroy();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		channel.disconnect();
+	},
+});
+
 // `muc start` — the bare `muc` path: ask which mode, and for whatever that mode
 // needs, then run it. Reached as the default subcommand, so it never has to be
 // typed.
@@ -138,7 +205,7 @@ const main = defineCommand({
 		name: "muc",
 		description: "A shared, collaboratively-edited text box in your terminal.",
 	},
-	subCommands: { serve, connect, solo, start },
+	subCommands: { serve, connect, solo, agent, start },
 	default: "start",
 });
 
@@ -262,8 +329,12 @@ function isInteractive(): boolean {
 // A small set of distinct cursor colors, chosen deterministically from the
 // handle so the same name keeps the same color across a session.
 const PALETTE = ["cyan", "magenta", "green", "yellow", "blue", "redBright"];
-function userFrom(name: string, descriptor?: string): UserInfo {
+function userFrom(
+	name: string,
+	descriptor?: string,
+	kind?: UserInfo["kind"],
+): UserInfo {
 	let sum = 0;
 	for (const character of name) sum += character.charCodeAt(0);
-	return { name, color: PALETTE[sum % PALETTE.length], descriptor };
+	return { name, color: PALETTE[sum % PALETTE.length], descriptor, kind };
 }

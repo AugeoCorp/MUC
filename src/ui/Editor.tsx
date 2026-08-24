@@ -16,7 +16,11 @@ import { Box, Text, useApp, useStdin, useWindowSize } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
+import {
+	type CollabSession,
+	isHuman,
+	LOCAL_ORIGIN,
+} from "../collab/session.ts";
 
 const DOC_NAME = "shared.txt";
 
@@ -470,11 +474,14 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const remoteCursors = session.getRemoteCursors();
 	const sentMessages = session.messages.toArray();
 	const localReady = session.isReady();
-	const participantCount = 1 + remoteCursors.length;
+	// Only humans gate the send — agents appear in the legend but not the tally.
+	const remoteHumans = remoteCursors.filter((cursor) => isHuman(cursor.user));
+	const participantCount =
+		(isHuman(session.user) ? 1 : 0) + remoteHumans.length;
 	const readyCount =
-		(localReady ? 1 : 0) +
-		remoteCursors.filter((cursor) => cursor.ready).length;
-	const everyoneReady = readyCount === participantCount;
+		(isHuman(session.user) && localReady ? 1 : 0) +
+		remoteHumans.filter((cursor) => cursor.ready).length;
+	const everyoneReady = session.isEveryoneReady();
 
 	// index -> color for the first remote cursor sitting on each cell.
 	const remoteByIndex = new Map<number, string>();
@@ -613,6 +620,7 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 						<Text color="gray"> · </Text>
 						<Text color={cursor.user.color}>● </Text>
 						<Text bold>{cursor.user.name} </Text>
+						{!isHuman(cursor.user) && <Text color="gray">(agent) </Text>}
 						{cursor.user.descriptor !== undefined && (
 							<Text color="gray">({cursor.user.descriptor}) </Text>
 						)}

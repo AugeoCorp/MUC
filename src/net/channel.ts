@@ -82,6 +82,30 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 	};
 }
 
+// Two channels wired back-to-back: whatever one posts, the other's listeners
+// receive, synchronously. Used to connect two in-process sessions — tests, and
+// eventually multiple agent personas sharing one process.
+export function createChannelPair(): [Channel, Channel] {
+	const listenersA = new Set<(frame: unknown) => void>();
+	const listenersB = new Set<(frame: unknown) => void>();
+	const endpoint = (
+		own: Set<(frame: unknown) => void>,
+		other: Set<(frame: unknown) => void>,
+	): Channel => ({
+		post(frame) {
+			other.forEach((listener) => listener(frame));
+		},
+		subscribe(listener) {
+			own.add(listener);
+			return () => own.delete(listener);
+		},
+		disconnect() {
+			own.clear();
+		},
+	});
+	return [endpoint(listenersA, listenersB), endpoint(listenersB, listenersA)];
+}
+
 // A no-op channel for solo editing (`muc solo`): nothing is broadcast and
 // nothing arrives, but the local document still works on its own.
 export function createLocalChannel(): Channel {
