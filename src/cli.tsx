@@ -9,7 +9,11 @@ import {
 	createTunnelChannel,
 } from "./net/channel.ts";
 import { startRelay } from "./net/relay.ts";
-import { startCloudflareTunnel } from "./net/tunnel.ts";
+import {
+	isSessionCode,
+	relayUrlFor,
+	startCloudflareTunnel,
+} from "./net/tunnel.ts";
 
 const handle = {
 	type: "string",
@@ -49,13 +53,13 @@ const serve = defineCommand({
 			return;
 		}
 
-		const connect = (): Promise<Channel> => createTunnelChannel(localUrl);
+		const openChannel = (): Promise<Channel> => createTunnelChannel(localUrl);
 		const instance = render(
 			<App
 				user={userFrom(args.handle)}
-				connect={connect}
+				connect={openChannel}
 				isHost
-				shareUrl={tunnel.publicUrl}
+				shareCode={tunnel.code}
 			/>,
 		);
 		await instance.waitUntilExit();
@@ -65,50 +69,67 @@ const serve = defineCommand({
 	},
 });
 
-const main = defineCommand({
+// `muc connect <code>` — join someone else's session with the code they shared.
+const connect = defineCommand({
 	meta: {
-		name: "muc",
-		description: "A shared, collaboratively-edited text box in your terminal.",
+		name: "connect",
+		description: "Join a session using the code the host shared.",
 	},
 	args: {
+		code: {
+			type: "positional",
+			description: "Session code from `muc serve` (e.g. wide-blue-cat-42).",
+		},
 		handle,
-		url: {
-			type: "string",
-			description: "Relay URL shared by the host (from `muc serve`).",
-			default: "",
-		},
-		loopback: {
-			type: "boolean",
-			description: "Skip the network; edit the box solo.",
-			default: false,
-		},
 	},
-	subCommands: { serve },
 	run({ args }) {
-		if (!args.loopback && args.url === "") {
+		const code = args.code ?? "";
+		if (!isSessionCode(code)) {
 			console.error(
-				"Pass --url <relay-url> to join, or run `muc serve` to host.",
+				`"${code}" doesn't look like a session code. Expected a single word like wide-blue-cat-42 — if the host sent you a link, the code is the part before the first dot.`,
 			);
 			process.exitCode = 1;
 			return;
 		}
 
-		const connect = (): Promise<Channel> =>
-			args.loopback
-				? Promise.resolve(createLocalChannel())
-				: createTunnelChannel(args.url);
+		const openChannel = (): Promise<Channel> =>
+			createTunnelChannel(relayUrlFor(code));
 
-		// Solo (`--loopback`) has no relay, so that lone user hosts their own
-		// session; someone who joined with `--url` is a guest, never the submitter.
+		// Whoever joins is a guest, never the submitter — the host sends.
 		const instance = render(
-			<App
-				user={userFrom(args.handle)}
-				connect={connect}
-				isHost={args.loopback}
-			/>,
+			<App user={userFrom(args.handle)} connect={openChannel} isHost={false} />,
 		);
 		return instance.waitUntilExit();
 	},
+});
+
+// `muc solo` — skip the network entirely and poke at the box on your own.
+const solo = defineCommand({
+	meta: {
+		name: "solo",
+		description: "Skip the network; edit the box on your own.",
+	},
+	args: { handle },
+	run({ args }) {
+		const openChannel = (): Promise<Channel> =>
+			Promise.resolve(createLocalChannel());
+
+		// Solo has no relay, so that lone user hosts their own session.
+		const instance = render(
+			<App user={userFrom(args.handle)} connect={openChannel} isHost />,
+		);
+		return instance.waitUntilExit();
+	},
+});
+
+// The root command is pure dispatch — citty runs a parent's `run` *after* the
+// subcommand it dispatched to, so a root with both would fire twice.
+const main = defineCommand({
+	meta: {
+		name: "muc",
+		description: "A shared, collaboratively-edited text box in your terminal.",
+	},
+	subCommands: { serve, connect, solo },
 });
 
 runMain(main);

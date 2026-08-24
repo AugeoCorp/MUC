@@ -29,15 +29,15 @@ brew install cloudflared          # one-time, if you don't already have it
 muc serve --handle echo
 ```
 
-`muc serve` prints a public `https://<something>.trycloudflare.com` URL — share
-that link with whoever you want editing alongside you.
+`muc serve` prints a **session code** — one word like `wide-blue-cat-42`. Share
+that with whoever you want editing alongside you; it's all they need.
 
 ## Join a session
 
-Point `--url` at the link the host gave you:
+Pass the code the host gave you:
 
 ```bash
-muc --url https://<something>.trycloudflare.com --handle nova
+muc connect wide-blue-cat-42 --handle nova
 ```
 
 Everyone in the session sees the same text and each other's cursors, and late
@@ -48,7 +48,7 @@ joiners receive the full document automatically.
 Skip the network entirely and just poke at the box on your own:
 
 ```bash
-muc --loopback
+muc solo
 ```
 
 ## Controls
@@ -74,9 +74,9 @@ the published `muc` binary:
 ```bash
 npm install
 
-npm run dev -- --loopback                     # solo, no network
+npm run dev -- solo                           # solo, no network
 npm run dev -- serve --handle echo            # host a session
-npm run dev -- --url <link> --handle nova     # join a host's session
+npm run dev -- connect <code> --handle nova   # join a host's session
 ```
 
 The `serve` form still needs `cloudflared` on your `PATH` (see

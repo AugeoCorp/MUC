@@ -26,7 +26,10 @@ peer-to-peer.
 
 - One host runs `muc serve`: it stands up a local HTTP relay
   (`src/net/relay.ts`, an in-memory message log) and exposes it publicly through
-  a Cloudflare Quick Tunnel (`src/net/tunnel.ts`), printing a URL to share.
+  a Cloudflare Quick Tunnel (`src/net/tunnel.ts`), printing a **session code**
+  to share. Quick Tunnels always live at `<code>.trycloudflare.com`, so the
+  subdomain alone identifies the session — `relayUrlFor` (`src/net/tunnel.ts`)
+  expands it back into a URL on the joining side (`muc connect <code>`).
 - Everyone — the host included — joins as a client over a **`Channel`**
   (`src/net/channel.ts`), which short-polls the relay for new frames and POSTs
   its own. Long-lived streaming is deliberately avoided; a quick tunnel won't
@@ -41,7 +44,7 @@ peer-to-peer.
 **The seam** is the `Channel` interface (`src/net/channel.ts`), where the
 network meets the collaboration layer. Two implementations exist today: the
 tunnel-backed channel and a no-op `createLocalChannel` for solo editing
-(`--loopback`).
+(`muc solo`).
 
 > **Direction note.** The original goal was true peer-to-peer over libp2p / the
 > IPFS DHT; [`docs/spec.md`](./docs/spec.md) describes that plan and is now
@@ -67,7 +70,7 @@ tunnel-backed channel and a no-op `createLocalChannel` for solo editing
 
 ```
 src/
-├── cli.tsx                # citty entrypoint + shebang; `muc` and `muc serve`
+├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`
 ├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
@@ -78,7 +81,7 @@ src/
 ├── net/
 │   ├── channel.ts          # Channel interface + tunnel / local implementations
 │   ├── relay.ts            # local HTTP message-log server (the host runs this)
-│   └── tunnel.ts           # spawns `cloudflared` for a public URL
+│   └── tunnel.ts           # spawns `cloudflared`; session code ↔ relay URL
 └── utilities/
     ├── assertValue.ts
     └── assertValue.test.ts

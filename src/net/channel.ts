@@ -82,7 +82,7 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 	};
 }
 
-// A no-op channel for solo editing (`--loopback`): nothing is broadcast and
+// A no-op channel for solo editing (`muc solo`): nothing is broadcast and
 // nothing arrives, but the local document still works on its own.
 export function createLocalChannel(): Channel {
 	const listeners = new Set<(frame: unknown) => void>();

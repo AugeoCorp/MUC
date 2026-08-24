@@ -16,11 +16,11 @@ interface AppProps {
 	connect: () => Promise<Channel>;
 	/** True for the participant hosting the session — the sole message submitter. */
 	isHost: boolean;
-	/** Set when hosting — the public relay URL to share with others. */
-	shareUrl?: string;
+	/** Set when hosting — the session code to share with others. */
+	shareCode?: string;
 }
 
-export function App({ user, connect, isHost, shareUrl }: AppProps) {
+export function App({ user, connect, isHost, shareCode }: AppProps) {
 	const [status, setStatus] = useState<ConnectionStatus>("connecting");
 	const [session, setSession] = useState<CollabSession>();
 
@@ -54,8 +54,10 @@ export function App({ user, connect, isHost, shareUrl }: AppProps) {
 	return (
 		<Box flexDirection="column" padding={1}>
 			<Title />
-			{shareUrl !== undefined && (
-				<Text color="greenBright">Invite others — share: {shareUrl}</Text>
+			{shareCode !== undefined && (
+				<Text color="greenBright">
+					Invite others — they run: <Text bold>muc connect {shareCode}</Text>
+				</Text>
 			)}
 			{status === "connecting" && <Text color="yellow">Connecting…</Text>}
 			{status === "error" && <Text color="red">Could not connect.</Text>}
