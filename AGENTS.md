@@ -42,8 +42,16 @@ peer-to-peer.
   streaming is deliberately avoided; a quick tunnel won't reliably forward one.
 - The shared state lives in `src/collab/session.ts`: local edits and cursors are
   encoded as base64 frames and ridden over the channel, and inbound frames are
-  applied to the Yjs doc. Because the relay replays its whole log to a late
+  applied to the Yjs doc. Because the relay replays its retained log to a late
   joiner, the document reconstructs automatically.
+- The relay **compacts** that log so it never grows without bound: accumulated
+  document frames are periodically merged into one via `Y.mergeUpdates` (merged
+  replay ≡ original replay, since Yjs updates are idempotent and commutative),
+  awareness frames older than ~90 seconds age out (live clients re-announce
+  every ~15 seconds; departed ones stop replaying as ghosts), and frames the
+  relay can't parse are kept forever untouched. Client cursors are sequence
+  numbers, so they survive compaction — a cursor inside a merged run just
+  receives the whole merged frame, which is redundant but harmless for Yjs.
 - The UI (`src/ui/Editor.tsx`) treats Yjs as the single source of truth — React
   never stores the text, it re-renders from the doc.
 - **AI agents can sit at the box too**: `muc agent <code>` (`src/agent/`) joins

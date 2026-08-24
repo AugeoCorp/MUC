@@ -5,8 +5,8 @@
 // Each participant has ONE Y.Doc. Every local edit makes Yjs emit a binary
 // update, which we base64-encode into a frame and post on the channel; inbound
 // frames are applied to the doc. Cursors travel the same way via y-protocols
-// awareness. Because the relay replays its whole log to a late joiner, applying
-// that backlog reconstructs the full document automatically.
+// awareness. Because the relay replays its retained (compacted) log to a late
+// joiner, applying that backlog reconstructs the full document automatically.
 
 import {
 	Awareness,
