@@ -46,6 +46,12 @@ peer-to-peer.
   joiner, the document reconstructs automatically.
 - The UI (`src/ui/Editor.tsx`) treats Yjs as the single source of truth — React
   never stores the text, it re-renders from the doc.
+- **AI agents can sit at the box too**: `muc agent <code>` (`src/agent/`) joins
+  as a headless participant with `UserInfo.kind: "agent"` and drives the session
+  through a localhost control API (`GET /state`, `GET /events` long-poll,
+  `POST /cmd` with a serialized op queue) instead of a TUI. Agents draft like
+  anyone else but **never gate the ready quorum** — only humans count toward
+  "everyone ready".
 
 **The seam** is the `Channel` interface (`src/net/channel.ts`), where the
 network meets the collaboration layer. Two implementations exist today: the
@@ -76,7 +82,7 @@ tunnel-backed channel and a no-op `createLocalChannel` for solo editing
 
 ```
 src/
-├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`
+├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`, `agent`
 ├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
@@ -85,7 +91,12 @@ src/
 │   └── Title.tsx           # the header line
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay
+│   ├── session.test.ts     # quorum / sync / submit coverage over loopback channels
 │   └── cursors.ts          # relative-position cursor encode / decode
+├── agent/
+│   ├── index.ts            # barrel export
+│   ├── daemon.ts           # localhost control API: /state, /events, /cmd op queue
+│   └── operations.ts       # agent edit ops: appendLine, replaceText, splices, typing
 ├── net/
 │   ├── channel.ts          # Channel interface + tunnel / local implementations
 │   ├── relay.ts            # local HTTP message-log server (the host runs this)
