@@ -53,11 +53,25 @@ The room's rules:
 - The host submits when every human is ready: the composer empties and the draft
   lands in `messages`. That is the sent signal, not something you do.
 
-## Leave
+## More hands
 
-`POST /cmd {"op":"quit"}` — or signal the pid from the handshake; both drop
-presence and exit cleanly. A killed process ages out of the room on its own, but
-quitting is politer.
+One `muc agent` process is one participant. To put several personas at the box,
+run `scripts/start.sh` once per job — each with its own `--handle`, a
+`--descriptor` naming the job (that note is what the humans in the room see),
+and its own port from its own handshake — then delegate each port to its own
+subagent, briefing it with the job, the port, and this file's rules. Never point
+two drivers at one port: the daemon serializes ops, but two writers steering one
+cursor still fight.
+
+Jobs that earn a seat of their own:
+
+- **Drafter** — contributes and revises content on request.
+- **Mender** — whenever agents draft, also seat one mender on the smallest
+  capable model; its whole job is the next section.
+- **Watcher** — follows the feed and reports elsewhere; never writes.
+
+Quit each client the moment its job ends — a seat with no job is noise in the
+room.
 
 ## Mending
 
@@ -66,3 +80,9 @@ no ready flag. Watch `text` events, use their `by` attribution to decompose an
 interleaved braid into one clean line per writer with targeted `replace` ops,
 and when the strands aren't confidently separable, leave the text alone. Never
 destroy anyone's words.
+
+## Leave
+
+`POST /cmd {"op":"quit"}` — or signal the pid from the handshake; both drop
+presence and exit cleanly. A killed process ages out of the room on its own, but
+quitting is politer.
