@@ -25,11 +25,12 @@ import { Participant } from "./Participant.tsx";
 const CHROME_COLUMNS = 2;
 const MIN_WIDTH = 20;
 
-// The box grows with the draft rather than sitting at a fixed height: never
-// shorter than MIN_ROWS, never taller than this share of the terminal. Past
-// that it stops growing and scrolls to keep the local cursor in view.
+// The box takes the whole terminal apart from the chrome: the title row, the
+// rule above and below the draft, and the three footer rows. Keep this in step
+// with what App and the footer actually render — if the frame ever ends up
+// taller than the terminal, it scrolls its own top line away as you type.
+const CHROME_ROWS = 6;
 const MIN_ROWS = 3;
-const MAX_HEIGHT_SHARE = 2 / 3;
 
 // ⌃t toggles the authorship lens. Chosen because it's free in every chord the
 // editor already claims, and — unlike ⌃b — it isn't tmux's prefix key.
@@ -467,13 +468,11 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 
 		session.text.observe(onText);
 		session.awareness.on("change", bump);
-		session.messages.observe(bump);
 		// The server reassigns colors as people come and go.
 		session.colors.observe(bump);
 		return () => {
 			session.text.unobserve(onText);
 			session.awareness.off("change", bump);
-			session.messages.unobserve(bump);
 			session.colors.unobserve(bump);
 		};
 	}, [session]);
@@ -506,7 +505,6 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const text = session.text.toString();
 	const localIndex = session.getLocalIndex();
 	const remoteCursors = session.getRemoteCursors();
-	const sentMessages = session.messages.toArray();
 	const localReady = session.isReady();
 	const participantCount = 1 + remoteCursors.length;
 	const readyCount =
@@ -537,12 +535,8 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 
 	const rows = computeRows(text, textWidth);
 
-	// Height follows the draft, clamped at both ends (see MIN_ROWS above).
-	const maxRows = Math.max(
-		MIN_ROWS,
-		Math.floor(terminalRows * MAX_HEIGHT_SHARE),
-	);
-	const visibleRows = Math.min(Math.max(rows.length, MIN_ROWS), maxRows);
+	// The draft fills whatever the chrome leaves, however short it is.
+	const visibleRows = Math.max(MIN_ROWS, terminalRows - CHROME_ROWS);
 
 	// Vertical window so the local cursor stays in view once the box stops growing.
 	const localRow = rowOfIndex(rows, localIndex);
@@ -605,18 +599,9 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 
 	return (
 		<Box flexDirection="column">
-			{sentMessages.length > 0 && (
-				<Box flexDirection="column">
-					<Text color="gray">┄ sent to the agent ┄</Text>
-					{sentMessages.map((message, index) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: the log is append-only, so a row's index never changes
-						<Text key={index} wrap="truncate">
-							<Text color="cyan">▸ </Text>
-							{message}
-						</Text>
-					))}
-				</Box>
-			)}
+			{/* The sent-message log used to sit here. It's still in the document and
+			    still on the server's screen — it just doesn't compete with the draft
+			    for height any more. */}
 			{/* Heavy rules above and below, no sides — the draft runs the full
 			    width of the terminal between them. */}
 			<Box
