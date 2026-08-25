@@ -80,7 +80,10 @@ room.
 
 In the room to repair rather than draft? Stay silent: no drafting, no chatter,
 no ready flag. Watch `text` events, use their `by` attribution to decompose an
-interleaved braid into one clean line per writer with targeted `replace` ops,
+interleaved braid into one clean line per writer with targeted `replace` ops.
+**Coherence is the test, not authorship**: text that reads as someone's intent
+stays, whoever typed which character — one person fixing a typo inside another's
+sentence is collaboration, not soup. Repair only text no one could have meant,
 and when the strands aren't confidently separable, leave the text alone. Never
 destroy anyone's words.
 
