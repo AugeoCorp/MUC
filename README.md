@@ -96,10 +96,17 @@ muc solo
 ```
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
-       ⌃z undo · ⌃y redo · ⌃c quit
-view   ⌃t authorship — tint each character in the color of whoever wrote it
+       ⌃z undo · ⌃y redo · ⌃c ⌃c quit (twice, in quick succession)
+view   ⇞⇟ or the scroll wheel move the draft without moving the cursor —
+       typing snaps back. Click the scrollbar to jump.
+       ⌃t authorship — tint each character in the color of whoever wrote it
 send   ⌃s toggle ready — the server sends once everyone is ready
 ```
+
+> **Known gap:** while `muc` is running it captures the mouse in order to read
+> the wheel, so the terminal's own click-drag selection is disabled — hold
+> **Shift** to select text meanwhile. Selection is being reimplemented in-app
+> (with OSC 52 for the clipboard); until then, `⇞`/`⇟` work without the mouse.
 
 > **Note:** `⌃s` (Ctrl+S) is the reliable "ready" chord and works in every
 > terminal. `⇧⏎`/`⌥⏎` (Shift/Option+Enter) also toggle ready in terminals that

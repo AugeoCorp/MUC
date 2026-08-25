@@ -89,7 +89,8 @@ src/
 │   ├── Launcher.tsx        # bare `muc`: asks mode / code / handle before starting
 │   ├── Participant.tsx     # one legend row: kind-shaped marker, name, ready mark
 │   ├── ServerStatus.tsx    # what `muc serve` shows: code, who's here, what's sent
-│   └── Title.tsx           # the header line
+│   ├── Title.tsx           # the header line
+│   └── useConfirmQuit.ts   # ⌃c twice to quit, shared by the client and server
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay
 │   ├── cursors.ts          # relative-position cursor encode / decode

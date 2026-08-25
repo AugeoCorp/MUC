@@ -5,10 +5,11 @@
 // Like the Editor, this renders straight from Yjs and keeps no text of its own;
 // a version counter bumps on every awareness or message change to re-render.
 
-import { Box, Text } from "ink";
+import { Box, Text, useApp, useStdin } from "ink";
 import { type ReactElement, useEffect, useState } from "react";
 import type { CollabSession } from "../collab/session.ts";
 import { Participant } from "./Participant.tsx";
+import { CTRL_C, useConfirmQuit } from "./useConfirmQuit.ts";
 
 interface ServerStatusProps {
 	session: CollabSession;
@@ -20,7 +21,33 @@ export function ServerStatus({
 	session,
 	shareCode,
 }: ServerStatusProps): ReactElement {
+	const { exit } = useApp();
+	const { stdin, setRawMode, isRawModeSupported } = useStdin();
 	const [, setVersion] = useState(0);
+	const { armed, press } = useConfirmQuit();
+
+	// Taking the session down disconnects everyone, so ⌃c asks twice here too.
+	//
+	// It's read as a keystroke rather than caught as a SIGINT: Ink registers
+	// signal-exit at startup, which force-exits whenever it believes it's the
+	// only SIGINT listener — a judgement based on a listener count we'd be
+	// racing. Raw mode sidesteps the whole question, since ⌃c then never becomes
+	// a signal at all. Where raw mode isn't available (piped, no TTY) there's no
+	// keyboard to ask twice with, and SIGINT keeps its usual meaning.
+	useEffect(() => {
+		if (!isRawModeSupported || stdin === undefined) return;
+		setRawMode(true);
+		const onData = (chunk: Buffer | string): void => {
+			const data = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+			if (!data.includes(CTRL_C)) return;
+			if (press()) exit();
+		};
+		stdin.on("data", onData);
+		return () => {
+			stdin.off("data", onData);
+			setRawMode(false);
+		};
+	}, [stdin, setRawMode, isRawModeSupported, exit, press]);
 
 	useEffect(() => {
 		const bump = () => setVersion((version) => version + 1);
@@ -90,7 +117,13 @@ export function ServerStatus({
 					))}
 				</Box>
 			)}
-			<Text color="gray">⌃c to stop serving</Text>
+			{armed ? (
+				<Text color="yellow" bold>
+					⌃c again to stop serving — everyone here is disconnected
+				</Text>
+			) : (
+				<Text color="gray">⌃c to stop serving</Text>
+			)}
 		</Box>
 	);
 }

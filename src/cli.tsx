@@ -44,6 +44,12 @@ const descriptorArg = {
 
 const DEFAULT_HANDLE = "anon";
 
+// Ink quits on the first ⌃c of its own accord, before the screen underneath
+// ever sees the keystroke. Hand it over so they can ask for a second press
+// instead (see ui/useConfirmQuit.ts). The launcher keeps Ink's default —
+// quitting a prompt you haven't answered yet costs nothing.
+const CONFIRMS_QUIT = { exitOnCtrlC: false } as const;
+
 // Never published — a server holds a UserInfo the way it holds a doc, but its
 // presence is deliberately kept off the wire (see collab/session.ts).
 const SERVER_USER: UserInfo = { name: "muc", color: "gray" };
@@ -120,6 +126,7 @@ const solo = defineCommand({
 				connect={openChannel}
 				role="solo"
 			/>,
+			CONFIRMS_QUIT,
 		);
 		return instance.waitUntilExit();
 	},
@@ -205,15 +212,13 @@ async function serveSession(): Promise<void> {
 	const session = createCollabSession(channel, SERVER_USER, { role: "server" });
 	const instance = render(
 		<ServerStatus session={session} shareCode={tunnel.code} />,
+		CONFIRMS_QUIT,
 	);
 
-	// Nothing here reads the keyboard, so raw mode is off and ⌃c arrives as a
-	// signal rather than a keystroke. Catch it so the tunnel and relay get shut
-	// down properly instead of being orphaned.
-	const stop = (): void => instance.unmount();
-	process.once("SIGINT", stop);
+	// ServerStatus owns ⌃c: it arrives as a signal here, and takes two presses to
+	// confirm. Either way it exits through Ink, so the cleanup below still runs
+	// and the tunnel and relay aren't left orphaned.
 	await instance.waitUntilExit();
-	process.off("SIGINT", stop);
 
 	session.destroy();
 	channel.disconnect();
@@ -237,6 +242,7 @@ async function joinSession(
 			role="participant"
 			shareCode={code}
 		/>,
+		CONFIRMS_QUIT,
 	);
 	await instance.waitUntilExit();
 }
