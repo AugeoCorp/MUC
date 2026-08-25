@@ -50,5 +50,35 @@ friendly.
   legitimate frame is a keystroke or a merged update, so even a generous cap is
   small.
 
+## 3. The mender is two layers, and only one needs a model
+
+An earlier review instinct — that a mender can't reliably repair humans typing
+over each other — was wrong, and the correction shapes where mending code should
+live. A CRDT never reorders one author's own characters, so a braid is a
+shuffle-merge of intact per-author subsequences; a mender that follows the event
+feed from before the braid can maintain a shadow copy of the text with every
+character tagged by its edit's `by`, and decomposing the braid into each
+writer's exact string is then mechanical, not inference. (Delete-only edits
+carry no `by`, and don't need one — a positional delete updates the shadow
+regardless of who made it.)
+
+What the model is actually for is the judgment layer: braided authorship and
+deliberate collaboration look identical in the stream. One person fixing a typo
+inside another's sentence embeds their characters mid-run exactly like soup
+does; the difference is linguistic — the result reads as someone's intent. Hence
+the skill's mending rule: coherent text stays whoever typed it, and only text no
+one could have meant gets decomposed.
+
+Two implications. The deterministic layer could move into code — the daemon
+could serve a per-character authorship view over the feed (a shadow model it
+already has the events for), shrinking any mender to the coherence judgment
+alone and making the smallest-capable-model guidance even more right. And the
+mender's power depends on continuous presence: attribution can't be
+reconstructed from compacted backlog (merged frames carry many writers, so `by`
+resolves to nothing), which is the real argument for seating the mender from the
+start rather than summoning one after soup appears.
+
+---
+
 Do the token before publishing `@augeo/muc`; the rest can follow on their own
 schedule.
