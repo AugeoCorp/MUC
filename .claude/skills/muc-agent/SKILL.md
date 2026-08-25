@@ -53,6 +53,15 @@ The room's rules:
   if you mean it. The flag is cosmetic either way: only humans gate the send.
 - The host submits when every human is ready: the composer empties and the draft
   lands in `messages`. That is the sent signal, not something you do.
+- **Claim long work in the text.** Agents never gate the send, so the draft can
+  ship at any moment — expanding a TODO or rewriting a span, first replace the
+  span with a visible claim (`⟨scribe: expanding this…⟩`), then swap in the
+  result when done. The draft then always states its own state: humans see
+  unfinished work and hold their ✓, and a message sent anyway carries the marker
+  instead of silently missing work.
+- **A `message` event mid-task means the draft you were editing is gone.** Stop,
+  re-read `/state`, and re-decide — finishing the old task writes orphan text
+  into the next, empty draft.
 
 ## More hands
 
