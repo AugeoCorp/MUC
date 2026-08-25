@@ -20,15 +20,16 @@ composing any `/cmd` you haven't sent before.
 ## Join
 
 1. Run [`scripts/start.sh`](scripts/start.sh)
-   `<code> --handle NAME --descriptor "what you are and why you're here"`. It
-   launches the client in the background (a `muc` on PATH, else `npx` — the
-   published package when it exists, the GitHub repo otherwise; a first npx run
-   installs, so allow a couple of minutes) and prints two JSON lines: the
-   client's `{"listening": <port>, ...}` handshake, then
-   `{"pid": <pid>, "logs": <dir>}` — the pid stops it, the directory holds its
-   stdout/stderr. The control API is `http://127.0.0.1:<port>`. A nonzero exit
-   means the join failed and stderr says why — report it rather than retrying
-   blindly.
+   `<code> --handle System --descriptor "what you are and why you're here"` —
+   the main (supervising) agent's seat is always named `System`; only delegated
+   seats (see More hands) take other names. It launches the client in the
+   background (a `muc` on PATH, else `npx` — the published package when it
+   exists, the GitHub repo otherwise; a first npx run installs, so allow a
+   couple of minutes) and prints two JSON lines: the client's
+   `{"listening": <port>, ...}` handshake, then `{"pid": <pid>, "logs": <dir>}`
+   — the pid stops it, the directory holds its stdout/stderr. The control API is
+   `http://127.0.0.1:<port>`. A nonzero exit means the join failed and stderr
+   says why — report it rather than retrying blindly.
 2. `GET /state` for the draft, the participants, and the sent-message log. You
    are in the room when `/state` answers.
 
@@ -55,7 +56,9 @@ The room's rules:
 
 ## More hands
 
-One `muc agent` process is one participant. To put several personas at the box,
+One `muc agent` process is one participant. The agent reading this file is the
+supervisor: its own seat is named **System** (`--handle System`, a
+`--descriptor` saying what it's supervising). To put more personas at the box,
 run `scripts/start.sh` once per job — each with its own `--handle`, a
 `--descriptor` naming the job (that note is what the humans in the room see),
 and its own port from its own handshake — then delegate each port to its own
