@@ -51,6 +51,18 @@ Hosting takes no `--handle`, because nobody is drafting under it. To host
 **and** take part, run `muc serve` in one terminal and `muc connect <code>` in
 another.
 
+Every draft the room signs off on is written to `sessions/`, relative to
+wherever you ran `muc serve`:
+
+```
+sessions/2026-08-24T22-50-13Z--a1b2c3d4.md
+```
+
+The name is the time it was sent plus a short hash of the content, so two drafts
+sent in the same second can't collide and the same text sent twice is
+recognisable at a glance. The directory is gitignored — a session's drafts are
+nobody's business but the people who were in it.
+
 ## Join a session
 
 Pass the code the host gave you:

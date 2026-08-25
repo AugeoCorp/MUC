@@ -84,6 +84,7 @@ tunnel-backed channel and a no-op `createLocalChannel` for solo editing
 src/
 ├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`
 ├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
+├── sessions.ts            # the server writes each sent draft to sessions/*.md
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
 │   ├── Launcher.tsx        # bare `muc`: asks mode / code / handle before starting

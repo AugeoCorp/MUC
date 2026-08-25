@@ -19,6 +19,7 @@ import {
 	relayUrlFor,
 	startCloudflareTunnel,
 } from "./net/tunnel.ts";
+import { saveSubmission } from "./sessions.ts";
 import { type LaunchChoice, Launcher } from "./ui/Launcher.tsx";
 import { ServerStatus } from "./ui/ServerStatus.tsx";
 
@@ -210,16 +211,36 @@ async function serveSession(): Promise<void> {
 	}
 
 	const session = createCollabSession(channel, SERVER_USER, { role: "server" });
+
+	// Whatever the room signs off on gets written down as it's sent. The log is
+	// append-only, so anything past what we've already filed is new. Ink patches
+	// the console, so a failure here prints above the frame rather than through
+	// it.
+	let filed = 0;
+	const onSubmission = (): void => {
+		const pending = session.messages.toArray().slice(filed);
+		filed += pending.length;
+		pending.forEach((content) => {
+			void saveSubmission(content, new Date()).catch((error: unknown) => {
+				console.error(
+					`Couldn't save the draft: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			});
+		});
+	};
+	session.messages.observe(onSubmission);
+
 	const instance = render(
 		<ServerStatus session={session} shareCode={tunnel.code} />,
 		CONFIRMS_QUIT,
 	);
 
-	// ServerStatus owns ⌃c: it arrives as a signal here, and takes two presses to
-	// confirm. Either way it exits through Ink, so the cleanup below still runs
-	// and the tunnel and relay aren't left orphaned.
+	// ServerStatus owns ⌃c: it takes two presses to confirm, and exits through
+	// Ink either way, so the cleanup below still runs and the tunnel and relay
+	// aren't left orphaned.
 	await instance.waitUntilExit();
 
+	session.messages.unobserve(onSubmission);
 	session.destroy();
 	channel.disconnect();
 	tunnel.close();

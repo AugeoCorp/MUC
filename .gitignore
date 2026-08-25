@@ -2,6 +2,10 @@ node_modules/
 .DS_Store
 dist/
 
+# Drafts the server writes down as they're sent — whatever a session happened
+# to be about, which is nobody's business but the people who were in it.
+sessions/
+
 # Claude Code
 .claude/worktrees/
 .claude/plans/
