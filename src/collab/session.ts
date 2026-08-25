@@ -16,6 +16,7 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 import type { Channel } from "../net/channel.ts";
+import { fromBase64, toBase64 } from "../utilities/base64.ts";
 import { decodeCursor, encodeCursor } from "./cursors.ts";
 
 export interface UserInfo {
@@ -107,11 +108,6 @@ interface AwarenessChanges {
 	updated: number[];
 	removed: number[];
 }
-
-const toBase64 = (bytes: Uint8Array): string =>
-	Buffer.from(bytes).toString("base64");
-const fromBase64 = (text: string): Uint8Array =>
-	new Uint8Array(Buffer.from(text, "base64"));
 
 export function createCollabSession(
 	channel: Channel,

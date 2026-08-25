@@ -122,6 +122,8 @@ export function moveCursor(session: CollabSession, index: number): void {
 	session.publishCursor(clamp(index, 0, session.text.length));
 }
 
+const DEFAULT_CHARACTERS_PER_SECOND = 14;
+
 const sleep = (milliseconds: number): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -134,9 +136,14 @@ const sleep = (milliseconds: number): Promise<void> =>
 export async function typeText(
 	session: CollabSession,
 	value: string,
-	charactersPerSecond = 14,
+	charactersPerSecond = DEFAULT_CHARACTERS_PER_SECOND,
 ): Promise<void> {
-	const delay = 1000 / clamp(charactersPerSecond, 1, 100);
+	// NaN slips through clamp (every comparison is false), and a NaN delay
+	// types at event-loop speed — the opposite of pacing. Fall back instead.
+	const pace = Number.isFinite(charactersPerSecond)
+		? clamp(charactersPerSecond, 1, 100)
+		: DEFAULT_CHARACTERS_PER_SECOND;
+	const delay = 1000 / pace;
 	for (const character of value) {
 		insertAtCursor(session, character);
 		await sleep(delay);

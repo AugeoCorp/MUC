@@ -13,6 +13,7 @@ import {
 	insertAtCursor,
 	moveCursor,
 	replaceText,
+	typeText,
 } from "./operations.ts";
 
 const agentUser: UserInfo = { name: "scribe", color: "green", kind: "agent" };
@@ -138,6 +139,19 @@ describe("cursor operations", () => {
 		deleteRange(agentSession, 2, 100);
 		expect(agentSession.text.toString()).toBe("ab");
 		expect(agentSession.getLocalIndex()).toBe(2);
+	});
+});
+
+describe("typeText", () => {
+	it("falls back to the default pace when cps is not finite", async () => {
+		const [agentSession] = createAgentWithPeer();
+		const started = Date.now();
+		await typeText(agentSession, "hi!", Number.NaN);
+		const elapsed = Date.now() - started;
+		expect(agentSession.text.toString()).toBe("hi!");
+		// Three characters at the default 14 cps is ~214ms; a NaN delay would
+		// finish in single-digit milliseconds.
+		expect(elapsed).toBeGreaterThan(100);
 	});
 });
 

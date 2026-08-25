@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import {
@@ -56,6 +57,26 @@ describe("startRelay", () => {
 
 		const garbageCursor = await fetchMessages("nonsense");
 		expect(garbageCursor.items).toEqual(["alpha", "beta", "gamma"]);
+	});
+
+	it("survives a client aborting a POST mid-body", async () => {
+		await send("alpha");
+
+		// Open a raw socket, declare a longer body than we send, then destroy
+		// the connection so the request stream errors server-side.
+		const socket = connect(relay.port, "127.0.0.1");
+		await new Promise((resolve) => socket.once("connect", resolve));
+		socket.write(
+			"POST /send HTTP/1.1\r\nHost: relay\r\nContent-Length: 64\r\n\r\npartial",
+		);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		socket.destroy();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		// The relay is still alive and the half-received frame never landed.
+		await send("beta");
+		const after = await fetchMessages(0);
+		expect(after.items).toEqual(["alpha", "beta"]);
 	});
 
 	it("compacts document frames past the threshold into one merged update", async () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty";
 import { render } from "ink";
-import { startAgentDaemon } from "./agent/index.ts";
+import { type AgentDaemon, startAgentDaemon } from "./agent/index.ts";
 import { App } from "./app.tsx";
 import { createCollabSession, type UserInfo } from "./collab/session.ts";
 import {
@@ -159,10 +159,25 @@ const agent = defineCommand({
 		const closed = new Promise<void>((resolve) => {
 			shutdown = resolve;
 		});
-		const daemon = await startAgentDaemon(session, {
-			port: Number.parseInt(args.port, 10),
-			onQuit: () => shutdown(),
-		});
+		let daemon: AgentDaemon;
+		try {
+			daemon = await startAgentDaemon(session, {
+				port: Number.parseInt(args.port, 10),
+				onQuit: () => shutdown(),
+			});
+		} catch (error) {
+			console.error(
+				`Couldn't start the control API on port ${args.port}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			process.exitCode = 1;
+			// Same teardown as the quit path: destroy() posts our departure, and
+			// the poll loop needs a beat to flush it — or we ghost in the room
+			// until awareness ages us out.
+			session.destroy();
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			channel.disconnect();
+			return;
+		}
 		process.on("SIGINT", () => shutdown());
 		process.on("SIGTERM", () => shutdown());
 

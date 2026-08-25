@@ -34,6 +34,8 @@ import {
 	type ServerResponse,
 } from "node:http";
 import * as Y from "yjs";
+import { fromBase64, toBase64 } from "../utilities/base64.ts";
+import { readBody } from "../utilities/readBody.ts";
 
 export interface Relay {
 	port: number;
@@ -92,7 +94,12 @@ export function startRelay(): Promise<Relay> {
 			return;
 		}
 		if (request.method === "POST" && url.pathname === "/send") {
-			void append(log, request, response);
+			// A client behind a flaky tunnel can abort mid-body; that rejection
+			// must be caught here or it takes the whole relay down with it.
+			append(log, request, response).catch(() => {
+				if (!response.headersSent) response.writeHead(400);
+				response.end();
+			});
 			return;
 		}
 		response.writeHead(404).end();
@@ -196,19 +203,3 @@ function pruneStaleAwareness(log: RelayLog, now: number): void {
 		(entry) => entry.kind !== "awareness" || entry.receivedAt >= cutoff,
 	);
 }
-
-function readBody(request: IncomingMessage): Promise<string> {
-	return new Promise((resolve, reject) => {
-		let data = "";
-		request.on("data", (chunk) => {
-			data += chunk;
-		});
-		request.on("end", () => resolve(data));
-		request.on("error", reject);
-	});
-}
-
-const toBase64 = (bytes: Uint8Array): string =>
-	Buffer.from(bytes).toString("base64");
-const fromBase64 = (text: string): Uint8Array =>
-	new Uint8Array(Buffer.from(text, "base64"));

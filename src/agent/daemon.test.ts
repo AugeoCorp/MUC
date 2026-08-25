@@ -198,4 +198,16 @@ describe("agent daemon", () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		expect(quitCalled).toBe(true);
 	});
+
+	it("rejects instead of crashing when the port is already taken", async () => {
+		const fixture = await createFixture();
+		const [channelA] = createChannelPair();
+		const session = createCollabSession(channelA, agentUser, {
+			role: "participant",
+		});
+		await expect(
+			startAgentDaemon(session, { port: fixture.daemon.port }),
+		).rejects.toThrow();
+		session.destroy();
+	});
 });

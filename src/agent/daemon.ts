@@ -10,7 +10,7 @@
 // concurrent `replace` from another caller — the first swarm session shredded
 // text exactly that way.
 
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer } from "node:http";
 import type * as Y from "yjs";
 import {
 	type CollabSession,
@@ -18,6 +18,7 @@ import {
 	type RemoteCursor,
 	type UserInfo,
 } from "../collab/session.ts";
+import { readBody } from "../utilities/readBody.ts";
 import {
 	appendLine,
 	applySplices,
@@ -116,13 +117,14 @@ export function startAgentDaemon(
 	// remote cursor twitch — cursors are always available from /state.
 	let lastRoster = "";
 	const onAwareness = (): void => {
-		const roster = participants()
+		const current = participants();
+		const roster = current
 			.map((participant) => `${participant.name}:${participant.ready}`)
 			.sort()
 			.join(",");
 		if (roster !== lastRoster) {
 			lastRoster = roster;
-			emit("roster", { participants: participants() });
+			emit("roster", { participants: current });
 		}
 	};
 	session.awareness.on("change", onAwareness);
@@ -302,7 +304,11 @@ export function startAgentDaemon(
 		respond(404, { ok: false, error: "not found" });
 	});
 
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
+		// Without a listener, a listen failure (the port is taken, or
+		// privileged) becomes an uncaught exception instead of a rejection the
+		// caller can present.
+		server.on("error", reject);
 		server.listen(options.port ?? 0, "127.0.0.1", () => {
 			const address = server.address();
 			const port =
@@ -320,16 +326,5 @@ export function startAgentDaemon(
 				},
 			});
 		});
-	});
-}
-
-function readBody(request: IncomingMessage): Promise<string> {
-	return new Promise((resolve, reject) => {
-		let data = "";
-		request.on("data", (chunk) => {
-			data += chunk;
-		});
-		request.on("end", () => resolve(data));
-		request.on("error", reject);
 	});
 }
