@@ -31,6 +31,10 @@ const MIN_WIDTH = 20;
 const MIN_ROWS = 3;
 const MAX_HEIGHT_SHARE = 2 / 3;
 
+// ⌃t toggles the authorship lens. Chosen because it's free in every chord the
+// editor already claims, and — unlike ⌃b — it isn't tmux's prefix key.
+const TOGGLE_AUTHORS = "\x14";
+
 // ---------------------------------------------------------------------------
 // Text geometry: split into visual rows honoring newlines + width wrapping.
 // ---------------------------------------------------------------------------
@@ -208,8 +212,14 @@ export function applyKey(
 ): void {
 	// Every edit clears the ready flag: changing the draft means you're no longer
 	// signed off on it. setReady(false) is a no-op when already un-ready.
+	// Every insert is stamped with who made it, which is what the authorship lens
+	// (⌃t) reads back. Yjs already knows internally; the attribute just puts it
+	// somewhere public.
 	const insert = (index: number, value: string): void => {
-		session.doc.transact(() => session.text.insert(index, value), LOCAL_ORIGIN);
+		session.doc.transact(
+			() => session.text.insert(index, value, { author: session.doc.clientID }),
+			LOCAL_ORIGIN,
+		);
 		session.setReady(false);
 	};
 	const remove = (index: number, count: number): void => {
@@ -371,17 +381,30 @@ export function applyKey(
 // Rendering.
 // ---------------------------------------------------------------------------
 
-function cell(
-	character: string,
-	index: number,
-	localIndex: number,
-	remoteColor: string | undefined,
-	key: string,
-): ReactElement {
-	const isLocal = index === localIndex;
+interface CellProps {
+	character: string;
+	key: string;
+	/** True when the local cursor sits on this character. */
+	isLocalCursor: boolean;
+	/** Set when a remote cursor sits here — their color. */
+	remoteColor: string | undefined;
+	/** Set only while the authorship lens is on — who wrote this character. */
+	authorColor: string | undefined;
+}
+
+// A cursor sitting on a character always wins over the authorship tint: where
+// someone is is more urgent than who typed it, and the two would fight for the
+// same color slot.
+function cell({
+	character,
+	key,
+	isLocalCursor,
+	remoteColor,
+	authorColor,
+}: CellProps): ReactElement {
 	const display = character === "" || character === "\n" ? " " : character;
 
-	if (isLocal && remoteColor !== undefined) {
+	if (isLocalCursor && remoteColor !== undefined) {
 		return (
 			<Text
 				key={key}
@@ -394,7 +417,7 @@ function cell(
 			</Text>
 		);
 	}
-	if (isLocal) {
+	if (isLocalCursor) {
 		return (
 			<Text key={key} inverse>
 				{display}
@@ -408,7 +431,11 @@ function cell(
 			</Text>
 		);
 	}
-	return <Text key={key}>{display}</Text>;
+	return (
+		<Text key={key} color={authorColor}>
+			{display}
+		</Text>
+	);
 }
 
 interface EditorProps {
@@ -422,6 +449,9 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const { stdin, setRawMode } = useStdin();
 	const { rows: terminalRows, columns: terminalColumns } = useWindowSize();
 	const textWidth = Math.max(MIN_WIDTH, terminalColumns - CHROME_COLUMNS);
+	// The authorship lens: off by default, because a permanently multi-colored
+	// draft is harder to read than the plain one.
+	const [showAuthors, setShowAuthors] = useState(false);
 	const [, setVersion] = useState(0);
 	const localOps = useRef(0);
 
@@ -454,9 +484,16 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		setRawMode(true);
 		const onData = (chunk: Buffer | string) => {
 			const data = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-			tokenize(data).forEach((token) =>
-				applyKey(session, token, exit, textWidth),
-			);
+			tokenize(data).forEach((token) => {
+				// ⌃t is handled here rather than in applyKey: it changes how the
+				// draft is drawn, not what the draft says, so it never touches the
+				// document.
+				if (token === TOGGLE_AUTHORS) {
+					setShowAuthors((shown) => !shown);
+					return;
+				}
+				applyKey(session, token, exit, textWidth);
+			});
 		};
 		stdin.on("data", onData);
 		return () => {
@@ -484,6 +521,19 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 			remoteByIndex.set(cursor.index, cursor.user.color);
 		}
 	});
+
+	// Only paid for while the lens is on. One color lookup per author rather than
+	// per character, since a draft is mostly long runs by the same person.
+	const authors = showAuthors ? session.getAuthors() : undefined;
+	const authorColors = new Map<number, string | undefined>();
+	function authorColorAt(index: number): string | undefined {
+		const clientId = authors?.[index];
+		if (clientId === undefined) return undefined;
+		if (!authorColors.has(clientId)) {
+			authorColors.set(clientId, session.colorFor(clientId));
+		}
+		return authorColors.get(clientId);
+	}
 
 	const rows = computeRows(text, textWidth);
 
@@ -518,7 +568,13 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		const spans: ReactNode[] = [];
 		for (let i = row.start; i < row.end; i++) {
 			spans.push(
-				cell(text[i], i, localIndex, remoteByIndex.get(i), `${vr}:${i}`),
+				cell({
+					character: text[i],
+					key: `${vr}:${i}`,
+					isLocalCursor: i === localIndex,
+					remoteColor: remoteByIndex.get(i),
+					authorColor: authorColorAt(i),
+				}),
 			);
 		}
 		const showTrailing = row.hasNewline || globalRow === rows.length - 1;
@@ -527,13 +583,13 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 			(localIndex === row.end || remoteByIndex.has(row.end))
 		) {
 			spans.push(
-				cell(
-					" ",
-					row.end,
-					localIndex,
-					remoteByIndex.get(row.end),
-					`${vr}:trail`,
-				),
+				cell({
+					character: " ",
+					key: `${vr}:trail`,
+					isLocalCursor: localIndex === row.end,
+					remoteColor: remoteByIndex.get(row.end),
+					authorColor: undefined,
+				}),
 			);
 		}
 		if (spans.length === 0) {
@@ -611,8 +667,16 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 					<Text color="gray"> · no one else here yet</Text>
 				)}
 			</Text>
-			<Text color="gray" wrap="truncate-end">
-				←→ move · ⌥←→ word · ⌘←→ line · ⌫ delete · ⌃z/⌃y undo · ⌃c quit
+			{/* The ⌃t hint doubles as the lens's only indicator: lit while it's on,
+			    so a multi-colored draft always has something saying why. */}
+			<Text wrap="truncate-end">
+				<Text color="gray">
+					←→ move · ⌥←→ word · ⌘←→ line · ⌫ delete · ⌃z/⌃y undo ·{" "}
+				</Text>
+				<Text color={showAuthors ? "cyan" : "gray"} bold={showAuthors}>
+					⌃t authors
+				</Text>
+				<Text color="gray"> · ⌃c quit</Text>
 			</Text>
 		</Box>
 	);

@@ -93,6 +93,15 @@ export interface CollabSession {
 	getRemoteCursors(): RemoteCursor[];
 	/** The local user's color — the server's assignment, or their own pick. */
 	localColor(): string;
+	/** A participant's color, or undefined if we've never heard of them. */
+	colorFor(clientId: number): string | undefined;
+	/**
+	 * Who inserted each character of the draft, as clientIds indexed the same way
+	 * the text is. A CRDT has no in-place edit — changing a character is a delete
+	 * and an insert — so this is authorship of what's there now, which is the
+	 * question the authorship lens actually asks.
+	 */
+	getAuthors(): (number | undefined)[];
 	/** Mark (or clear) the local user as ready to send. No-op if unchanged. */
 	setReady(ready: boolean): void;
 	/** Whether the local user is currently ready. */
@@ -184,13 +193,38 @@ export function createCollabSession(
 		return cursors;
 	}
 
-	function colorOf(clientId: number, fallback: string): string {
+	function colorFor(clientId: number): string | undefined {
 		const hue = colors.get(String(clientId));
-		return hue === undefined ? fallback : hexFromHue(hue);
+		if (hue !== undefined) return hexFromHue(hue);
+		// No assignment yet (or no server at all) — fall back to whatever they
+		// picked for themselves, which is all we know about someone who has left.
+		const state = awareness.getStates().get(clientId) as
+			| { user?: UserInfo }
+			| undefined;
+		return state?.user?.color;
+	}
+
+	function colorOf(clientId: number, fallback: string): string {
+		return colorFor(clientId) ?? fallback;
 	}
 
 	function localColor(): string {
 		return colorOf(doc.clientID, user.color);
+	}
+
+	function getAuthors(): (number | undefined)[] {
+		const authors: (number | undefined)[] = [];
+		text.toDelta().forEach((operation: { insert?: unknown }) => {
+			if (typeof operation.insert !== "string") return;
+			const attributes = (operation as { attributes?: { author?: unknown } })
+				.attributes;
+			const author =
+				typeof attributes?.author === "number" ? attributes.author : undefined;
+			// One entry per UTF-16 unit, so an index into the text is an index into
+			// this — the same counting `computeRows` and the cursor use.
+			for (let i = 0; i < operation.insert.length; i++) authors.push(author);
+		});
+		return authors;
 	}
 
 	function isEveryoneReady(): boolean {
@@ -331,6 +365,8 @@ export function createCollabSession(
 		getLocalIndex,
 		getRemoteCursors,
 		localColor,
+		colorFor,
+		getAuthors,
 		setReady,
 		isReady,
 		isEveryoneReady,

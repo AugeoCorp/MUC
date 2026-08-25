@@ -97,6 +97,7 @@ muc solo
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
        ⌃z undo · ⌃y redo · ⌃c quit
+view   ⌃t authorship — tint each character in the color of whoever wrote it
 send   ⌃s toggle ready — the server sends once everyone is ready
 ```
 
