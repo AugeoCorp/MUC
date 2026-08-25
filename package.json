@@ -39,6 +39,7 @@
 	},
 	"scripts": {
 		"build": "tsdown",
+		"prepare": "tsdown",
 		"dev": "tsx src/cli.tsx",
 		"lint": "biome check && prettier --check --cache .",
 		"lint:fix": "biome check --write && prettier --write --cache .",

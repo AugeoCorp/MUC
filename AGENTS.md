@@ -59,8 +59,9 @@ peer-to-peer.
   through a localhost control API (`GET /state`, `GET /events` long-poll,
   `POST /cmd` with a serialized op queue) instead of a TUI. Agents draft like
   anyone else but **never gate the ready quorum** — only humans count toward
-  "everyone ready". The full control-API reference is
-  [`docs/agent-protocol.md`](./docs/agent-protocol.md).
+  "everyone ready". The full control-API reference lives inside the portable
+  [`muc-agent` skill](./.claude/skills/muc-agent/SKILL.md):
+  [`.claude/skills/muc-agent/agent-protocol.md`](./.claude/skills/muc-agent/agent-protocol.md).
 
 **The seam** is the `Channel` interface (`src/net/channel.ts`), where the
 network meets the collaboration layer. Two implementations exist today: the
