@@ -2,7 +2,12 @@
 import { defineCommand, runMain } from "citty";
 import { render } from "ink";
 import { App } from "./app.tsx";
-import { createCollabSession, type UserInfo } from "./collab/session.ts";
+import { colorFromName } from "./collab/colors.ts";
+import {
+	createCollabSession,
+	type ParticipantKind,
+	type UserInfo,
+} from "./collab/session.ts";
 import {
 	type Channel,
 	createLocalChannel,
@@ -23,6 +28,12 @@ import { ServerStatus } from "./ui/ServerStatus.tsx";
 const handleArg = {
 	type: "string",
 	description: "Display name other people see; asked for if omitted.",
+} as const;
+
+const kindArg = {
+	type: "string",
+	description: "What you are: human or agent. Agents show as ◆ in the legend.",
+	default: "human",
 } as const;
 
 const descriptorArg = {
@@ -60,6 +71,7 @@ const connect = defineCommand({
 			description: "Session code from `muc serve` (e.g. wide-blue-cat-42).",
 		},
 		handle: handleArg,
+		kind: kindArg,
 		descriptor: descriptorArg,
 	},
 	async run({ args }) {
@@ -72,9 +84,20 @@ const connect = defineCommand({
 			return;
 		}
 
+		const kind = parseKind(args.kind);
+		if (kind === undefined) {
+			console.error(`--kind must be "human" or "agent", not "${args.kind}".`);
+			process.exitCode = 1;
+			return;
+		}
+
 		const handle = await resolveHandle(args.handle, code);
 		if (handle === undefined) return; // quit at the handle prompt
-		return joinSession(code, handle, args.descriptor);
+		return joinSession(code, {
+			name: handle,
+			kind,
+			descriptor: args.descriptor,
+		});
 	},
 });
 
@@ -93,7 +116,7 @@ const solo = defineCommand({
 		// one to read the handle either, so this mode never stops to ask for it.
 		const instance = render(
 			<App
-				user={userFrom(args.handle ?? DEFAULT_HANDLE)}
+				user={userFrom({ name: args.handle ?? DEFAULT_HANDLE })}
 				connect={openChannel}
 				role="solo"
 			/>,
@@ -126,7 +149,7 @@ const start = defineCommand({
 		if (choice === undefined) return; // quit at the prompt
 		return choice.mode === "serve"
 			? serveSession()
-			: joinSession(choice.code, choice.handle);
+			: joinSession(choice.code, { name: choice.handle });
 	},
 });
 
@@ -200,8 +223,7 @@ async function serveSession(): Promise<void> {
 
 async function joinSession(
 	code: string,
-	handle: string,
-	descriptor?: string,
+	details: { name: string; kind?: ParticipantKind; descriptor?: string },
 ): Promise<void> {
 	const openChannel = (): Promise<Channel> =>
 		createTunnelChannel(relayUrlFor(code));
@@ -210,7 +232,7 @@ async function joinSession(
 	// along so the footer can show it — anyone here can invite anyone else.
 	const instance = render(
 		<App
-			user={userFrom(handle, descriptor)}
+			user={userFrom(details)}
 			connect={openChannel}
 			role="participant"
 			shareCode={code}
@@ -259,11 +281,17 @@ function isInteractive(): boolean {
 	return process.stdin.isTTY === true;
 }
 
-// A small set of distinct cursor colors, chosen deterministically from the
-// handle so the same name keeps the same color across a session.
-const PALETTE = ["cyan", "magenta", "green", "yellow", "blue", "redBright"];
-function userFrom(name: string, descriptor?: string): UserInfo {
-	let sum = 0;
-	for (const character of name) sum += character.charCodeAt(0);
-	return { name, color: PALETTE[sum % PALETTE.length], descriptor };
+// The color is only ever a starting guess: the server reassigns as people
+// arrive, so that no two participants share one (see collab/session.ts).
+function userFrom(details: {
+	name: string;
+	kind?: ParticipantKind;
+	descriptor?: string;
+}): UserInfo {
+	return { ...details, color: colorFromName(details.name) };
+}
+
+// citty hands us whatever string was typed, so narrow it before it travels.
+function parseKind(value: string): ParticipantKind | undefined {
+	return value === "human" || value === "agent" ? value : undefined;
 }

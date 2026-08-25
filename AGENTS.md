@@ -36,7 +36,13 @@ peer-to-peer.
   for it and it isn't counted in "everyone ready" — and it is the single writer
   that submits the draft once the real participants are all ready. `muc solo`
   uses `role: "solo"`, which both drafts and submits; everyone else is a
-  `participant`, which only drafts.
+  `participant`, which only drafts. The server also **issues participant
+  colors** — it's the only party with a full view of the room — writing a hue
+  per clientId into a shared `colors` map. Colors are generated, not drawn from
+  a list: each arrival takes the hue furthest from everyone already present
+  (`hueInLargestGap`, `src/collab/colors.ts`), so the spread adapts to the size
+  of the room and never runs out. Clients render from that map and fall back to
+  their own hashed hue when there's no server (`muc solo`).
 - Everyone else joins as a client over a **`Channel`** (`src/net/channel.ts`),
   which short-polls the relay for new frames and POSTs its own. Long-lived
   streaming is deliberately avoided; a quick tunnel won't reliably forward one.
@@ -81,11 +87,13 @@ src/
 ├── ui/
 │   ├── Editor.tsx          # the collaborative text box: raw-stdin input, Yjs render
 │   ├── Launcher.tsx        # bare `muc`: asks mode / code / handle before starting
+│   ├── Participant.tsx     # one legend row: kind-shaped marker, name, ready mark
 │   ├── ServerStatus.tsx    # what `muc serve` shows: code, who's here, what's sent
 │   └── Title.tsx           # the header line
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay
-│   └── cursors.ts          # relative-position cursor encode / decode
+│   ├── cursors.ts          # relative-position cursor encode / decode
+│   └── colors.ts           # hue generation: widest-gap assignment, hue → hex
 ├── net/
 │   ├── channel.ts          # Channel interface + tunnel / local implementations
 │   ├── relay.ts            # local HTTP message-log server (the host runs this)

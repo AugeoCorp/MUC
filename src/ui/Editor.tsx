@@ -17,8 +17,7 @@ import type { ReactElement, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
 import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
-
-const DOC_NAME = "shared.txt";
+import { Participant } from "./Participant.tsx";
 
 // The box spans the terminal: only the app's own padding (1 each side) sits
 // between the draft and the edge, since the rules above and below it have no
@@ -434,16 +433,18 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 			if (transaction.origin === LOCAL_ORIGIN) localOps.current += 1;
 			setVersion((version) => version + 1);
 		};
-		const onAwareness = () => setVersion((version) => version + 1);
-		const onMessages = () => setVersion((version) => version + 1);
+		const bump = () => setVersion((version) => version + 1);
 
 		session.text.observe(onText);
-		session.awareness.on("change", onAwareness);
-		session.messages.observe(onMessages);
+		session.awareness.on("change", bump);
+		session.messages.observe(bump);
+		// The server reassigns colors as people come and go.
+		session.colors.observe(bump);
 		return () => {
 			session.text.unobserve(onText);
-			session.awareness.off("change", onAwareness);
-			session.messages.unobserve(onMessages);
+			session.awareness.off("change", bump);
+			session.messages.unobserve(bump);
+			session.colors.unobserve(bump);
 		};
 	}, [session]);
 
@@ -560,11 +561,6 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 					))}
 				</Box>
 			)}
-			<Text>
-				<Text color="gray">┄ </Text>
-				<Text bold>{DOC_NAME}</Text>
-				<Text color="gray"> ┄</Text>
-			</Text>
 			{/* Heavy rules above and below, no sides — the draft runs the full
 			    width of the terminal between them. */}
 			<Box
@@ -600,27 +596,15 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 			{/* Everyone on one row rather than one row each: ✓ / ○ carry the ready
 			    state that the count above spells out in words. */}
 			<Text wrap="truncate-end">
-				<Text color={session.user.color}>● </Text>
-				<Text bold>{session.user.name}</Text>
-				<Text color="gray"> (you · {localOps.current} edits) </Text>
-				{localReady ? (
-					<Text color="green">✓</Text>
-				) : (
-					<Text color="gray">○</Text>
-				)}
+				<Participant
+					user={{ ...session.user, color: session.localColor() }}
+					ready={localReady}
+					note={`you · ${localOps.current} edits`}
+				/>
 				{remoteCursors.map((cursor) => (
 					<Text key={cursor.clientId}>
 						<Text color="gray"> · </Text>
-						<Text color={cursor.user.color}>● </Text>
-						<Text bold>{cursor.user.name} </Text>
-						{cursor.user.descriptor !== undefined && (
-							<Text color="gray">({cursor.user.descriptor}) </Text>
-						)}
-						{cursor.ready ? (
-							<Text color="green">✓</Text>
-						) : (
-							<Text color="gray">○</Text>
-						)}
+						<Participant user={cursor.user} ready={cursor.ready} />
 					</Text>
 				))}
 				{remoteCursors.length === 0 && (
