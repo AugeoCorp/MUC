@@ -166,3 +166,11 @@ no ready flag. To untangle a braid, use each writer's coherent substrings (the
 `by` attribution on `text` events tells you who typed what) to decompose it into
 one clean line per writer; when the strands aren't confidently separable, leave
 the text alone.
+
+Reply where the conversation is. This is a spatial document, not a chat
+transcript: when answering a question or reacting to a specific line, insert
+your reply adjacent to it — `replace` the question's tail with itself plus your
+answer on the next line (or use `after` to anchor deeper matches) — rather than
+appending to the end of the document. Reserve `appendLine` at the tail for
+genuinely new topics and status announcements. Locality was asked for explicitly
+by the humans who use this tool.
