@@ -51,21 +51,28 @@ function createPair(
 
 /**
  * A tiny in-process hub: every post fans out to every other endpoint,
- * synchronously. Enough to seat three parties at one box in a test.
+ * synchronously, and a late subscriber replays the backlog first — the same
+ * contract as the real relay, which a session depends on now that the server
+ * writes color assignments before everyone has joined.
  */
 function createHub(endpointCount: number): Channel[] {
+	const log: Array<{ from: number; frame: unknown }> = [];
 	const listenerSets = Array.from(
 		{ length: endpointCount },
 		() => new Set<(frame: unknown) => void>(),
 	);
 	return listenerSets.map((own, index) => ({
 		post(frame) {
+			log.push({ from: index, frame });
 			listenerSets.forEach((other, otherIndex) => {
 				if (otherIndex === index) return;
 				other.forEach((listener) => listener(frame));
 			});
 		},
 		subscribe(listener) {
+			log.forEach((entry) => {
+				if (entry.from !== index) listener(entry.frame);
+			});
 			own.add(listener);
 			return () => own.delete(listener);
 		},

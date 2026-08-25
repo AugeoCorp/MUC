@@ -8,6 +8,7 @@
 import { Box, Text } from "ink";
 import { type ReactElement, useEffect, useState } from "react";
 import { type CollabSession, isHuman } from "../collab/session.ts";
+import { Participant } from "./Participant.tsx";
 
 interface ServerStatusProps {
 	session: CollabSession;
@@ -25,9 +26,11 @@ export function ServerStatus({
 		const bump = () => setVersion((version) => version + 1);
 		session.awareness.on("change", bump);
 		session.messages.observe(bump);
+		session.colors.observe(bump);
 		return () => {
 			session.awareness.off("change", bump);
 			session.messages.unobserve(bump);
+			session.colors.unobserve(bump);
 		};
 	}, [session]);
 
@@ -64,17 +67,7 @@ export function ServerStatus({
 						{drafters.map((cursor, index) => (
 							<Text key={cursor.clientId}>
 								{index > 0 && <Text color="gray"> · </Text>}
-								<Text color={cursor.user.color}>● </Text>
-								<Text bold>{cursor.user.name} </Text>
-								{!isHuman(cursor.user) && <Text color="gray">(agent) </Text>}
-								{cursor.user.descriptor !== undefined && (
-									<Text color="gray">({cursor.user.descriptor}) </Text>
-								)}
-								{cursor.ready ? (
-									<Text color="green">✓</Text>
-								) : (
-									<Text color="gray">○</Text>
-								)}
+								<Participant user={cursor.user} ready={cursor.ready} />
 							</Text>
 						))}
 					</Text>

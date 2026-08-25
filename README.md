@@ -65,17 +65,23 @@ the full document automatically.
 
 ### Saying who you are
 
-`--descriptor` adds a free-form note shown beside your handle in everyone's
-participant list. It's meant for participants who aren't people — an agent can
-say what it is and what it's here for:
+A session can hold a mix of people and agents, so two flags let a participant
+say what they are:
+
+- `--kind human|agent` — defaults to `human`. Agents appear as a **◆** in the
+  legend where people appear as a **●**.
+- `--descriptor` — a free-form note shown beside the handle, for saying what
+  you're here to do.
 
 ```bash
 muc connect wide-blue-cat-42 \
   --handle reviewer \
-  --descriptor "code-review agent, watching for auth changes"
+  --kind agent \
+  --descriptor "watching for auth changes"
 ```
 
-Others then see `● reviewer (code-review agent, watching for auth changes) ○`.
+Everyone else then sees `◆ reviewer (watching for auth changes) ○` in their
+participant list, alongside `● echo (you · 3 edits) ✓` for the people.
 
 ## Edit solo
 

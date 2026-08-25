@@ -17,7 +17,14 @@ import {
 import * as Y from "yjs";
 import type { Channel } from "../net/channel.ts";
 import { fromBase64, toBase64 } from "../utilities/base64.ts";
+import { hexFromHue, hueInLargestGap } from "./colors.ts";
 import { decodeCursor, encodeCursor } from "./cursors.ts";
+
+/**
+ * Who — or what — is at the other end. Everyone in the room is a peer; this
+ * only says which kind of peer, so the legend can tell them apart at a glance.
+ */
+export type ParticipantKind = "human" | "agent";
 
 export interface UserInfo {
 	/** Display name shown in the legend. */
@@ -25,17 +32,17 @@ export interface UserInfo {
 	/** Any ink-compatible color (named color or hex). */
 	color: string;
 	/**
+	 * What kind of participant this is. Agents never gate the ready-to-send
+	 * quorum. Absent counts as human — older clients that don't send a kind
+	 * must still be able to hold up the send.
+	 */
+	kind?: ParticipantKind;
+	/**
 	 * Free-form note on who this participant is and why they're here, shown
 	 * beside their name. Meant for participants who aren't people: an agent can
 	 * say what it is and what it's watching the draft for.
 	 */
 	descriptor?: string;
-	/**
-	 * Whether this participant is a person or a driven agent. Agents never gate
-	 * the ready-to-send quorum. Absent means "human" — older clients that don't
-	 * send a kind must still be able to hold up the send.
-	 */
-	kind?: "human" | "agent";
 }
 
 /** True when a participant should count toward the ready quorum. */
@@ -60,6 +67,9 @@ export const CONTENT_KEY = "content";
 /** The shared log of submitted messages lives under this key in the doc. */
 export const MESSAGES_KEY = "messages";
 
+/** The server's color assignments — clientId (as a string) → hue, 0–360. */
+export const COLORS_KEY = "colors";
+
 // Edits the local user makes are tagged LOCAL_ORIGIN (so undo can track only
 // them); edits that arrived from a peer are tagged NETWORK_ORIGIN (so we never
 // echo them back out and loop).
@@ -80,6 +90,8 @@ export interface CollabSession {
 	text: Y.Text;
 	/** The shared log of submitted messages, oldest first. */
 	messages: Y.Array<string>;
+	/** The server's hue assignments; observe it to re-render when they change. */
+	colors: Y.Map<number>;
 	awareness: Awareness;
 	undoManager: Y.UndoManager;
 	user: UserInfo;
@@ -89,6 +101,8 @@ export interface CollabSession {
 	getLocalIndex(): number;
 	/** Every other participant's cursor, resolved against the local doc. */
 	getRemoteCursors(): RemoteCursor[];
+	/** The local user's color — the server's assignment, or their own pick. */
+	localColor(): string;
 	/** Mark (or clear) the local user as ready to send. No-op if unchanged. */
 	setReady(ready: boolean): void;
 	/** Whether the local user is currently ready. */
@@ -118,6 +132,7 @@ export function createCollabSession(
 	const doc = new Y.Doc();
 	const text = doc.getText(CONTENT_KEY);
 	const messages = doc.getArray<string>(MESSAGES_KEY);
+	const colors = doc.getMap<number>(COLORS_KEY);
 	const awareness = new Awareness(doc);
 
 	// Local awareness state (cursor + ready) is written from one place so the two
@@ -166,12 +181,22 @@ export function createCollabSession(
 			if (entry.user === undefined) return;
 			cursors.push({
 				clientId,
-				user: entry.user,
+				// The assigned color wins over the one they picked for themselves.
+				user: { ...entry.user, color: colorOf(clientId, entry.user.color) },
 				index: decodeCursor(entry.cursor, doc),
 				ready: entry.ready === true,
 			});
 		});
 		return cursors;
+	}
+
+	function colorOf(clientId: number, fallback: string): string {
+		const hue = colors.get(String(clientId));
+		return hue === undefined ? fallback : hexFromHue(hue);
+	}
+
+	function localColor(): string {
+		return colorOf(doc.clientID, user.color);
 	}
 
 	function isEveryoneReady(): boolean {
@@ -269,11 +294,45 @@ export function createCollabSession(
 		}, LOCAL_ORIGIN);
 	}
 
+	// --- Colors ---------------------------------------------------------------
+	// Handing out colors needs one view of who's in the room, which is exactly
+	// what the server has and no client does. Each arrival gets the hue furthest
+	// from everyone already here (see colors.ts), written into a shared map that
+	// everyone renders from. Clients fall back to their own pick where there's no
+	// server to ask (`muc solo`, or the instant before the assignment lands).
+	function assignColors(): void {
+		if (role !== "server") return;
+
+		const present = new Set<string>();
+		awareness.getStates().forEach((state, clientId) => {
+			if (clientId === doc.clientID) return;
+			if ((state as { user?: UserInfo }).user === undefined) return;
+			present.add(String(clientId));
+		});
+
+		const departed = [...colors.keys()].filter((key) => !present.has(key));
+		const arrived = [...present].filter((key) => !colors.has(key));
+		if (departed.length === 0 && arrived.length === 0) return;
+
+		doc.transact(() => {
+			// Freeing a departed participant's hue first reopens that gap.
+			departed.forEach((key) => colors.delete(key));
+			// Reading the map back each time — rather than once up front — is what
+			// spreads a burst of simultaneous arrivals instead of stacking them.
+			arrived.forEach((key) =>
+				colors.set(key, hueInLargestGap([...colors.values()])),
+			);
+		}, LOCAL_ORIGIN);
+	}
+
 	// Whenever a message lands — from our own submit or a peer's — every client
 	// clears its own ready flag so the next draft starts clean. A client can only
-	// reset itself, so this fires everywhere rather than the host reaching into
+	// reset itself, so this fires everywhere rather than the server reaching into
 	// anyone else's presence.
-	const onPresenceChange = (): void => submitIfEveryoneReady();
+	const onPresenceChange = (): void => {
+		assignColors();
+		submitIfEveryoneReady();
+	};
 	const onMessageAdded = (): void => setReady(false);
 	awareness.on("change", onPresenceChange);
 	messages.observe(onMessageAdded);
@@ -282,12 +341,14 @@ export function createCollabSession(
 		doc,
 		text,
 		messages,
+		colors,
 		awareness,
 		undoManager,
 		user,
 		publishCursor,
 		getLocalIndex,
 		getRemoteCursors,
+		localColor,
 		setReady,
 		isReady,
 		isEveryoneReady,

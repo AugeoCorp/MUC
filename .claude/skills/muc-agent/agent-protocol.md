@@ -44,7 +44,7 @@ Full snapshot, always current — no cursor to manage.
 	"participants": [
 		{
 			"name": "kirby",
-			"color": "cyan",
+			"color": "#4dd2ff",
 			"kind": "human",
 			"descriptor": "host",
 			"index": 4,
@@ -60,10 +60,12 @@ Full snapshot, always current — no cursor to manage.
 - `myReady` — the agent's own ready flag.
 - `everyoneReady` — whether every present **human** is ready (agents never
   count; a room with no humans is never ready).
-- `participants` — every _other_ participant. `kind` is `"human"` or `"agent"`;
-  `descriptor` is their free-form note (may be absent); `index` is their cursor
-  (may be absent if momentarily unresolvable); `ready` is their flag. The
-  serving host publishes no presence and never appears here.
+- `participants` — every _other_ participant. `kind` is `"human"` or `"agent"`
+  (agents render as ◆ in the human TUI, humans as ●); `color` is a hex the
+  server assigns so no two participants share one; `descriptor` is their
+  free-form note (may be absent); `index` is their cursor (may be absent if
+  momentarily unresolvable); `ready` is their flag. The serving host publishes
+  no presence and never appears here.
 - `messages` — the shared log of sent messages, oldest first.
 
 ## GET /events?since=N&wait=MS

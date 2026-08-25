@@ -15,6 +15,7 @@ import type * as Y from "yjs";
 import {
 	type CollabSession,
 	NETWORK_ORIGIN,
+	type ParticipantKind,
 	type RemoteCursor,
 	type UserInfo,
 } from "../collab/session.ts";
@@ -52,7 +53,7 @@ interface AgentEvent {
 /** Who made an edit, when the writer can be named. */
 interface EditAttribution {
 	name: string;
-	kind: "human" | "agent";
+	kind: ParticipantKind;
 }
 
 const EVENT_BUFFER_LIMIT = 500;
