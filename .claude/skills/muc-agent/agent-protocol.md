@@ -151,28 +151,3 @@ An unknown `op` — or a known one with missing / mistyped params — returns
   transaction cannot.
 - **`replace` never moves your cursor**, so a background fix can't hijack a
   concurrent paced `type` mid-sentence.
-
-## Operational recommendations
-
-Concurrent writes at the same document position can interleave
-character-by-character — "CRDT soup". Atomic `appendLine` keeps an agent from
-causing it, but two humans typing in the same spot at the same time can still
-produce it.
-
-Whenever agents participate in a session, also run one dedicated minimal
-**mender** agent — the smallest, cheapest capable model (Haiku-class) — whose
-only job is watching the event feed and repairing interleaved or mangled text
-with targeted `replace` ops, reconstructing both original lines without ever
-destroying anyone's words. It stays otherwise silent: no drafting, no chatter,
-no ready flag. To untangle a braid, use each writer's coherent substrings (the
-`by` attribution on `text` events tells you who typed what) to decompose it into
-one clean line per writer; when the strands aren't confidently separable, leave
-the text alone.
-
-Reply where the conversation is. This is a spatial document, not a chat
-transcript: when answering a question or reacting to a specific line, insert
-your reply adjacent to it — `replace` the question's tail with itself plus your
-answer on the next line (or use `after` to anchor deeper matches) — rather than
-appending to the end of the document. Reserve `appendLine` at the tail for
-genuinely new topics and status announcements. Locality was asked for explicitly
-by the humans who use this tool.
