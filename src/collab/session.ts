@@ -334,8 +334,14 @@ export function createCollabSession(
 		submitIfEveryoneReady();
 	};
 	const onMessageAdded = (): void => setReady(false);
+	// A draft can cross the line without any presence changing: an agent
+	// appending to an already-ready room edits the text but not its own flag
+	// (agents are never ready). Re-check on text changes too, or that room
+	// stalls with everyone ready and a draft that never sends.
+	const onTextChanged = (): void => submitIfEveryoneReady();
 	awareness.on("change", onPresenceChange);
 	messages.observe(onMessageAdded);
+	text.observe(onTextChanged);
 
 	return {
 		doc,
@@ -355,6 +361,7 @@ export function createCollabSession(
 		destroy() {
 			awareness.off("change", onPresenceChange);
 			messages.unobserve(onMessageAdded);
+			text.unobserve(onTextChanged);
 			unsubscribe();
 			undoManager.destroy();
 			removeAwarenessStates(awareness, [doc.clientID], "destroy");

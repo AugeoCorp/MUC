@@ -5,6 +5,7 @@ import { type AgentDaemon, startAgentDaemon } from "./agent/index.ts";
 import { App } from "./app.tsx";
 import { colorFromName } from "./collab/colors.ts";
 import {
+	type CollabSession,
 	createCollabSession,
 	type ParticipantKind,
 	type UserInfo,
@@ -193,12 +194,7 @@ const agent = defineCommand({
 				`Couldn't start the control API on port ${args.port}: ${error instanceof Error ? error.message : String(error)}`,
 			);
 			process.exitCode = 1;
-			// Same teardown as the quit path: destroy() posts our departure, and
-			// the poll loop needs a beat to flush it — or we ghost in the room
-			// until awareness ages us out.
-			session.destroy();
-			await new Promise((resolve) => setTimeout(resolve, 300));
-			channel.disconnect();
+			await leaveSession(session, channel);
 			return;
 		}
 		process.on("SIGINT", () => shutdown());
@@ -209,13 +205,21 @@ const agent = defineCommand({
 
 		await closed;
 		await daemon.close();
-		// destroy() drops our presence with a final frame; give it a beat to
-		// flush before the poll loop stops.
-		session.destroy();
-		await new Promise((resolve) => setTimeout(resolve, 300));
-		channel.disconnect();
+		await leaveSession(session, channel);
 	},
 });
+
+// destroy() drops our presence with a final frame; the poll loop needs a beat
+// to flush it before disconnecting, or we ghost in the room until awareness
+// ages us out.
+async function leaveSession(
+	session: CollabSession,
+	channel: Channel,
+): Promise<void> {
+	session.destroy();
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	channel.disconnect();
+}
 
 // `muc start` — the bare `muc` path: ask which mode, and for whatever that mode
 // needs, then run it. Reached as the default subcommand, so it never has to be

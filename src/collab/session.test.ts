@@ -237,4 +237,33 @@ describe("server submit", () => {
 		expect(humanSession.messages.toArray()).toEqual(["go"]);
 		expect(agentSession.messages.toArray()).toEqual(["go"]);
 	});
+
+	it("sends when the draft lands after the room is already ready", () => {
+		const [serverChannel, humanChannel, agentChannel] = createHub(3);
+		const serverSession = track(
+			createCollabSession(
+				serverChannel,
+				{ name: "muc", color: "gray" },
+				{ role: "server" },
+			),
+		);
+		const humanSession = track(
+			createCollabSession(humanChannel, human("kirby"), {
+				role: "participant",
+			}),
+		);
+		const agentSession = track(
+			createCollabSession(agentChannel, agent("scribe"), {
+				role: "participant",
+			}),
+		);
+		// Ready before there's anything to send — an agent then supplies the
+		// draft without touching any presence, so only a text-change re-check
+		// can complete the send.
+		humanSession.setReady(true);
+		expect(serverSession.messages.toArray()).toEqual([]);
+		setText(agentSession, "go");
+		expect(serverSession.messages.toArray()).toEqual(["go"]);
+		expect(humanSession.messages.toArray()).toEqual(["go"]);
+	});
 });

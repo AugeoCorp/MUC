@@ -77,28 +77,37 @@ describe("replaceText", () => {
 	it("replaces the first occurrence and reports its index", () => {
 		const [agentSession] = createAgentWithPeer();
 		setText(agentSession, "the teh quick teh fox");
-		expect(replaceText(agentSession, { find: "teh", insert: "the" })).toBe(4);
+		expect(replaceText(agentSession, { find: "teh", insert: "the" })).toEqual({
+			index: 4,
+		});
 		expect(agentSession.text.toString()).toBe("the the quick teh fox");
 	});
 
 	it("honors an anchor so later occurrences are reachable", () => {
 		const [agentSession] = createAgentWithPeer();
 		setText(agentSession, "teh one, teh two");
-		const index = replaceText(agentSession, {
+		const result = replaceText(agentSession, {
 			find: "teh",
 			insert: "the",
 			after: "one,",
 		});
-		expect(index).toBe(9);
+		expect(result).toEqual({ index: 9 });
 		expect(agentSession.text.toString()).toBe("teh one, the two");
 	});
 
-	it("returns undefined and changes nothing on a miss", () => {
+	it("names which string missed and changes nothing", () => {
 		const [agentSession] = createAgentWithPeer();
 		setText(agentSession, "all good here");
+		expect(replaceText(agentSession, { find: "absent", insert: "x" })).toEqual({
+			miss: "find",
+		});
 		expect(
-			replaceText(agentSession, { find: "absent", insert: "x" }),
-		).toBeUndefined();
+			replaceText(agentSession, {
+				find: "good",
+				insert: "x",
+				after: "absent anchor",
+			}),
+		).toEqual({ miss: "after" });
 		expect(agentSession.text.toString()).toBe("all good here");
 	});
 

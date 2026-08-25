@@ -31,8 +31,9 @@ export interface Splice {
 	insert: string;
 }
 
-const clamp = (value: number, low: number, high: number): number =>
-	Math.max(low, Math.min(value, high));
+function clamp(value: number, low: number, high: number): number {
+	return Math.max(low, Math.min(value, high));
+}
 
 /**
  * Append `line` as its own line at the end of the document, atomically. The
@@ -51,27 +52,29 @@ export function appendLine(session: CollabSession, line: string): void {
 
 /**
  * Atomic find-and-replace of the first occurrence. Leaves the local cursor
- * where it was. Returns the index replaced at, or undefined when not found.
+ * where it was. A miss names which string failed to match — the anchor and
+ * the find text fail for different reasons, and a caller debugging "no
+ * match" needs to know which one moved under it.
  */
 export function replaceText(
 	session: CollabSession,
 	options: ReplaceOptions,
-): number | undefined {
+): { index: number } | { miss: "after" | "find" } {
 	const text = session.text.toString();
 	let from = 0;
 	if (options.after !== undefined) {
 		const anchor = text.indexOf(options.after);
-		if (anchor === -1) return undefined;
+		if (anchor === -1) return { miss: "after" };
 		from = anchor + options.after.length;
 	}
 	const index = text.indexOf(options.find, from);
-	if (index === -1) return undefined;
+	if (index === -1) return { miss: "find" };
 	session.doc.transact(() => {
 		session.text.delete(index, options.find.length);
 		session.text.insert(index, options.insert);
 	}, LOCAL_ORIGIN);
 	session.setReady(false);
-	return index;
+	return { index };
 }
 
 /**
@@ -124,8 +127,9 @@ export function moveCursor(session: CollabSession, index: number): void {
 
 const DEFAULT_CHARACTERS_PER_SECOND = 14;
 
-const sleep = (milliseconds: number): Promise<void> =>
-	new Promise((resolve) => setTimeout(resolve, milliseconds));
+function sleep(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 /**
  * Human-paced typing at the live cursor: one character per transaction so

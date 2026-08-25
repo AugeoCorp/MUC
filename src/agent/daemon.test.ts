@@ -92,6 +92,20 @@ describe("agent daemon", () => {
 		expect(result).toEqual({ ok: false, error: "find: no match" });
 	});
 
+	it("rejects a malformed splices batch without applying any of it", async () => {
+		const fixture = await createFixture();
+		await command(fixture, { op: "appendLine", line: "keep me" });
+		const result = await command(fixture, {
+			op: "splices",
+			splices: [
+				{ at: 0, remove: 0, insert: "X" },
+				{ at: 2, remove: 1 },
+			],
+		});
+		expect(result.ok).toBe(false);
+		expect(fixture.agentSession.text.toString()).toBe("keep me\n");
+	});
+
 	it("rejects unknown ops", async () => {
 		const fixture = await createFixture();
 		const result = await command(fixture, { op: "selfDestruct" });

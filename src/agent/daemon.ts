@@ -212,15 +212,34 @@ export function startAgentDaemon(
 			typeof command.find === "string" &&
 			typeof command.insert === "string"
 		) {
-			const index = replaceText(session, {
+			const result = replaceText(session, {
 				find: command.find,
 				insert: command.insert,
 				after: typeof command.after === "string" ? command.after : undefined,
 			});
-			if (index === undefined) return { ok: false, error: "find: no match" };
-			return { ok: true, index, text: session.text.toString() };
+			if ("miss" in result) {
+				return { ok: false, error: `${result.miss}: no match` };
+			}
+			return { ok: true, index: result.index, text: session.text.toString() };
 		}
 		if (op === "splices" && Array.isArray(command.splices)) {
+			// Validated up front: a malformed element throwing mid-transaction
+			// would still commit the splices already applied (Yjs transactions
+			// don't roll back), breaking the op's documented atomicity.
+			const wellFormed = command.splices.every((splice) => {
+				const candidate = splice as Partial<Splice> | undefined;
+				return (
+					typeof candidate?.at === "number" &&
+					typeof candidate.remove === "number" &&
+					typeof candidate.insert === "string"
+				);
+			});
+			if (!wellFormed) {
+				return {
+					ok: false,
+					error: "splices: every element needs {at, remove, insert}",
+				};
+			}
 			applySplices(session, command.splices as Splice[]);
 			return { ok: true, text: session.text.toString() };
 		}
