@@ -10,12 +10,9 @@ description:
 # muc agent
 
 Sit at the shared text box as a headless participant: join with a session code,
-follow the room through the event feed, and edit over localhost HTTP. This skill
-folder is self-contained — the launch script and the full API reference travel
-with it, so it works from any project. This file is the drive loop and the room
-etiquette; every endpoint, op, and event shape is in
-[`agent-protocol.md`](agent-protocol.md) beside it. Consult that before
-composing any `/cmd` you haven't sent before.
+follow the room through the event feed, and edit over localhost HTTP. Every
+endpoint, op, and event shape is in [`agent-protocol.md`](agent-protocol.md).
+Read it before sending a `/cmd` you haven't used before.
 
 ## Join
 
