@@ -3,10 +3,11 @@
 Where the mender could go next. The layering argument — decomposition is
 mechanical, judgment is linguistic — lives in
 [`design-notes.md`](./design-notes.md) (section 3); today's practice lives in
-the muc-agent skill's Mending section, and a subagent brute-forces all of it
-with no new code: it keeps the attribution ledger as notes, waits for quiet, and
-repairs with the ops that already exist. Everything below needs code, and each
-idea shrinks what the brute-force subagent has to carry.
+the muc-agent skill's [`mender.md`](../.claude/skills/muc-agent/mender.md), and
+a subagent brute-forces all of it with no new code: it keeps the attribution
+ledger as notes, waits for quiet, and repairs with the ops that already exist.
+Everything below needs code, and each idea shrinks what the brute-force subagent
+has to carry.
 
 ## A daemon-served authorship view
 
