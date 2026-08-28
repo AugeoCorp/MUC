@@ -36,12 +36,24 @@ duplicate.
 Never point two drivers at one port: the daemon serializes ops, but two writers
 steering one cursor still fight.
 
-Jobs that earn a seat of their own:
+Three jobs come up often enough to have names:
 
 - **Drafter** — contributes and revises content on request.
 - **Mender** — whenever agents draft, also seat one mender on the smallest
   capable model; its job is [`mending.md`](mending.md).
 - **Watcher** — follows the feed and reports elsewhere; never writes.
+
+Any other job takes a seat the same way: a fact-checker, a translator, a domain
+reviewer, whatever this session actually needs. Mending is only written out here
+because its method is intricate; every other job lives in the brief you write.
+Say in that brief what the hand does, whether it writes or only watches, and
+what finishing looks like — a hand with no completion criterion never quits its
+seat. Name it in the same voice: a `--handle` that is the job, a `--descriptor`
+telling the humans why it is in the room.
+
+Seat a job when the room should see it working — it runs while you do something
+else, or its output belongs in the draft under its own name. Work you would
+finish before anyone looked up needs no seat; do it from yours.
 
 Quit each client the moment its job ends — a seat with no job is noise in the
 room.

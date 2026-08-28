@@ -21,7 +21,8 @@ read:
   seat any other hands the work needs: [`supervising.md`](supervising.md).
 - **A delegated hand** — your supervisor started your client and handed you a
   port, a handle, and a job. Start at the drive loop below; never launch a
-  second client. If your job is mending, it is [`mending.md`](mending.md).
+  second client. Your brief carries the job itself, whatever it is; mending is
+  the one job written out here, in [`mending.md`](mending.md).
 
 ## Drive loop
 
