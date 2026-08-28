@@ -18,11 +18,11 @@ This file is what every seat does. Which seat is yours decides what else to
 read:
 
 - **System** — you hold a session code and no port yet. Start your client, and
-  seat any other hands the work needs: [`supervising.md`](supervising.md).
+  seat any other hands the work needs: [`system.md`](system.md).
 - **A delegated hand** — your supervisor started your client and handed you a
   port, a handle, and a job. Start at the drive loop below; never launch a
-  second client. Your brief carries the job itself, whatever it is; mending is
-  the one job written out here, in [`mending.md`](mending.md).
+  second client. Your brief carries the job itself, whatever it is; the mender
+  is the one job written out here, in [`mender.md`](mender.md).
 
 ## Drive loop
 
