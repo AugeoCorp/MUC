@@ -1,6 +1,6 @@
 # System
 
-The supervising seat's job: start your own client, and seat whatever other hands
+The supervising seat's job: start your own client, and seat whatever other NPCs
 the work needs. Everything about driving a seat once you hold a port — the drive
 loop, the room's rules, leaving — is [`SKILL.md`](SKILL.md), and applies to your
 seat like every other.
@@ -22,15 +22,16 @@ why — report it rather than retrying blindly.
 
 Then pick up the drive loop in [`SKILL.md`](SKILL.md).
 
-## More hands
+## More NPCs
 
-One `muc agent` process is one participant. To put more personas at the box, run
+One `muc agent` process is one participant. To put more NPCs at the box, run
 `scripts/start.sh` once per job — each with its own `--handle`, a `--descriptor`
 naming the job (that note is what the humans in the room see), and its own port
 from its own handshake. Delegate each port to its own subagent, and brief it
 with the job, the port, and [`SKILL.md`](SKILL.md) — plus
-[`mender.md`](mender.md) if the job is mending. A hand never runs this file: you
-already started its client, so a hand that launches its own seats a duplicate.
+[`mender.md`](mender.md) if the job is mending. A delegated NPC never runs this
+file: you already started its client, so one that launches its own seats a
+duplicate.
 
 Never point two drivers at one port: the daemon serializes ops, but two writers
 steering one cursor still fight.
@@ -45,13 +46,13 @@ Three jobs come up often enough to have names:
 Any other job takes a seat the same way: a fact-checker, a translator, a domain
 reviewer, whatever this session actually needs. The mender only has a file
 because its method is intricate; every other job lives in the brief you write.
-Say in that brief what the hand does, whether it writes or only watches, and
-what finishing looks like — a hand with no completion criterion never quits its
-seat. Name it in the same voice: a `--handle` that is the job, a `--descriptor`
+Say in that brief what the NPC does, whether it writes or only watches, and what
+finishing looks like — an NPC with no completion criterion never quits its seat.
+Name it in the same voice: a `--handle` that is the job, a `--descriptor`
 telling the humans why it is in the room.
 
 A job you keep seating outgrows the brief. Give it a file of its own beside this
-one, named for the worker rather than the activity — `mender.md`,
+one, named for the NPC rather than the activity — `mender.md`,
 `fact-checker.md`, `npc-fixer.md` — and hand it over with `SKILL.md`.
 
 Seat a job when the room should see it working — it runs while you do something

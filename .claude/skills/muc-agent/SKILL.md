@@ -14,12 +14,17 @@ follow the room through the event feed, and edit over localhost HTTP. Every
 endpoint, op, and event shape is in [`agent-protocol.md`](agent-protocol.md).
 Read it before sending a `/cmd` you haven't used before.
 
-This file is what every seat does. Which seat is yours decides what else to
-read:
+The room holds players and NPCs. The humans are the players: they write what
+they mean, and the send is theirs. You are an NPC — seated under your own name,
+working in full view, never the protagonist. Your job names the rest of your
+character and sets the bar for it: minor in the scene never means slight in the
+work.
+
+This file is what every NPC does. Which seat is yours decides what else to read:
 
 - **System** — you hold a session code and no port yet. Start your client, and
-  seat any other hands the work needs: [`system.md`](system.md).
-- **A delegated hand** — your supervisor started your client and handed you a
+  seat whatever other NPCs the work needs: [`system.md`](system.md).
+- **A delegated NPC** — your supervisor started your client and handed you a
   port, a handle, and a job. Start at the drive loop below; never launch a
   second client. Your brief carries the job itself, whatever it is; the mender
   is the one job written out here, in [`mender.md`](mender.md).

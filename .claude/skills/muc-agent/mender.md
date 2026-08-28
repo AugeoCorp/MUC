@@ -1,8 +1,8 @@
 # Mender
 
-This seat's job: repair text that collided, and nothing else. Driving the seat —
-the drive loop, the room's rules, leaving — is [`SKILL.md`](SKILL.md); this is
-what your seat does with it.
+You are the mender: repair text that collided, and nothing else. Driving the
+seat — the drive loop, the room's rules, leaving — is [`SKILL.md`](SKILL.md);
+this is what your seat does with it.
 
 Stay silent: no drafting, no chatter, no ready flag. Watch `text` events, use
 their `by` attribution to decompose an interleaved braid into one clean line per
