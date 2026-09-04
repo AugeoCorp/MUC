@@ -28,28 +28,28 @@ One `muc agent` process is one participant. To put more NPCs at the box, run
 `scripts/start.sh` once per job — each with its own `--handle`, a `--descriptor`
 naming the job (that note is what the humans in the room see), and its own port
 from its own handshake. Delegate each port to its own subagent, and brief it
-with the job, the port, and [`SKILL.md`](SKILL.md) — plus
-[`mender.md`](mender.md) if the job is mending. A delegated NPC never runs this
-file: you already started its client, so one that launches its own seats a
-duplicate.
+with the job, the port, and [`SKILL.md`](SKILL.md), plus the job's own file if
+it has one. A delegated NPC never runs this file: you already started its
+client, so one that launches its own seats a duplicate.
 
 One port, one driver: the daemon serializes ops, but two writers steering one
 cursor still fight.
 
-Three jobs come up often enough to have names:
+Three jobs come up often enough to have files:
 
-- **Drafter** — contributes and revises content on request.
+- **Drafter** — contributes and revises content on request:
+  [`drafter.md`](drafter.md).
 - **Mender** — whenever agents draft, also seat one mender on the smallest
-  capable model; its job is [`mender.md`](mender.md).
-- **Watcher** — follows the feed and reports elsewhere; never writes.
+  capable model: [`mender.md`](mender.md).
+- **Watcher** — follows the feed and reports elsewhere; never writes:
+  [`watcher.md`](watcher.md).
 
 Any other job takes a seat the same way: a fact-checker, a translator, a domain
-reviewer, whatever this session actually needs. The mender only has a file
-because its method is intricate; every other job lives in the brief you write. A
-brief should let the NPC work out the specifics itself: what it is for, whether
-it may write, and what finishing looks like. An NPC with no completion criterion
-never quits its seat. Name it the same way: a `--handle` that is the job, a
-`--descriptor` telling the humans why it is in the room.
+reviewer, whatever this session actually needs. It lives in the brief you write.
+A brief should let the NPC work out the specifics itself: what it is for,
+whether it may write, and what finishing looks like. An NPC with no completion
+criterion never quits its seat. Name it the same way: a `--handle` that is the
+job, a `--descriptor` telling the humans why it is in the room.
 
 A job you keep seating outgrows the brief. Give it a file of its own beside this
 one, named for the NPC rather than the activity — `mender.md`,

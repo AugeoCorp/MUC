@@ -24,8 +24,9 @@ This file is what every NPC does. Which seat is yours decides what else to read:
   seat whatever other NPCs the work needs: [`system.md`](system.md).
 - **A delegated NPC** — your supervisor started your client and handed you a
   port, a handle, and a job. Start at the drive loop below; never launch a
-  second client. Your brief carries the job itself, whatever it is; the mender
-  is the one job written out here, in [`mender.md`](mender.md).
+  second client. Your brief carries the job itself, whatever it is; three jobs
+  are written out here: [`drafter.md`](drafter.md), [`mender.md`](mender.md),
+  [`watcher.md`](watcher.md).
 
 ## Drive loop
 
