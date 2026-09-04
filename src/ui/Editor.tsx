@@ -12,24 +12,81 @@
 // Backspace as forward-delete. We need the exact escape sequences for line- and
 // word-level editing.
 
-import { Box, Text, useApp, useStdin, useWindowSize } from "ink";
+import { Box, Text, useApp, useStdin, useStdout, useWindowSize } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
 import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
 import { Participant } from "./Participant.tsx";
+import { useConfirmQuit } from "./useConfirmQuit.ts";
 
-// The box spans the terminal: only the app's own padding (1 each side) sits
-// between the draft and the edge, since the rules above and below it have no
-// sides to take up room.
-const CHROME_COLUMNS = 2;
+// The box spans the terminal: the app's own padding (1 each side) and the
+// scrollbar gutter on the right are all that sit between the draft and the
+// edge. The gutter is reserved even when there's nothing to scroll, so the
+// draft doesn't reflow the moment it grows past the box.
+const CHROME_COLUMNS = 3;
 const MIN_WIDTH = 20;
 
-// The box grows with the draft rather than sitting at a fixed height: never
-// shorter than MIN_ROWS, never taller than this share of the terminal. Past
-// that it stops growing and scrolls to keep the local cursor in view.
+// The box takes the whole terminal apart from the chrome: the title row, the
+// rule above and below the draft, and the three footer rows. Keep this in step
+// with what App and the footer actually render — if the frame ever ends up
+// taller than the terminal, it scrolls its own top line away as you type.
+const CHROME_ROWS = 6;
 const MIN_ROWS = 3;
-const MAX_HEIGHT_SHARE = 2 / 3;
+
+// ⌃t toggles the authorship lens. Chosen because it's free in every chord the
+// editor already claims, and — unlike ⌃b — it isn't tmux's prefix key.
+const TOGGLE_AUTHORS = "\x14";
+
+// Handled in the component rather than applyKey — quitting isn't an edit, and
+// it takes two presses (see useConfirmQuit).
+const QUIT = "\x03";
+
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
+// One line of overlap between pages, so nothing passes by unread.
+const PAGE_OVERLAP = 1;
+
+// Mouse reporting. 1002 reports presses, releases and motion while a button is
+// held; 1006 asks for the SGR encoding, which — unlike the original scheme —
+// survives past column 223. While this is on, the terminal hands us the mouse
+// instead of acting on it, so its own click-drag selection stops working:
+// selection has to be reimplemented here (with OSC 52 to reach the clipboard)
+// before this is a fair trade. Holding Shift bypasses capture meanwhile.
+const MOUSE_ON = "\x1b[?1002h\x1b[?1006h";
+const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l";
+
+// Rows above the draft — the title and the rule — for turning the terminal row
+// in a mouse report into a row of the box.
+const HEADER_ROWS = 2;
+
+const WHEEL_UP = 64;
+const WHEEL_DOWN = 65;
+const LEFT_BUTTON = 0;
+const LEFT_BUTTON_HELD = 32; // motion with the left button down
+const WHEEL_STEP = 3;
+
+const MOUSE_PATTERN = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
+
+interface MouseReport {
+	button: number;
+	/** Both 1-based, counted from the top-left of the terminal. */
+	column: number;
+	row: number;
+	pressed: boolean;
+}
+
+/** Read one SGR mouse report, or undefined if the token isn't one. */
+export function parseMouse(seq: string): MouseReport | undefined {
+	const match = MOUSE_PATTERN.exec(seq);
+	if (match === null) return undefined;
+	return {
+		button: Number.parseInt(match[1], 10),
+		column: Number.parseInt(match[2], 10),
+		row: Number.parseInt(match[3], 10),
+		pressed: match[4] === "M",
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Text geometry: split into visual rows honoring newlines + width wrapping.
@@ -110,6 +167,7 @@ const ESC = "\x1b";
 
 // Known multi-byte escape sequences, tried longest/most-specific first.
 const ESCAPE_PATTERNS: RegExp[] = [
+	/^\x1b\[<\d+;\d+;\d+[Mm]/, // SGR mouse report — see parseMouse
 	/^\x1b\[1;\d+[ABCD]/, // modified arrows: \x1b[1;<mod><A|B|C|D>
 	/^\x1b\[3;\d+~/, // modified forward-delete: \x1b[3;<mod>~
 	/^\x1b\[\d+~/, // tilde keys: 1~ 3~ 4~ 7~ 8~ ...
@@ -203,22 +261,22 @@ const END_KEYS = new Set(["\x05", "\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 export function applyKey(
 	session: CollabSession,
 	seq: string,
-	exit: () => void,
 	width: number,
 ): void {
 	// Every edit withdraws the ready flag: changing the draft means you're no
-	// longer signed off on it. session.edit does both in one update.
+	// longer signed off on it. session.edit does both in one update. Every
+	// insert is stamped with who made it, which is what the authorship lens
+	// (⌃t) reads back. Yjs already knows internally; the attribute just puts it
+	// somewhere public.
 	const insert = (index: number, value: string): void => {
-		session.edit(() => session.text.insert(index, value));
+		session.edit(() =>
+			session.text.insert(index, value, { author: session.doc.clientID }),
+		);
 	};
 	const remove = (index: number, count: number): void => {
 		session.edit(() => session.text.delete(index, count));
 	};
 
-	if (seq === "\x03") {
-		exit(); // Ctrl+C
-		return;
-	}
 	// Undo and redo change the draft like any edit, so they withdraw the flag
 	// too — ahead of the change, so no one ever sees the flag beside the new
 	// text (the undo manager runs its own transaction, which can't be joined).
@@ -374,17 +432,30 @@ export function applyKey(
 // Rendering.
 // ---------------------------------------------------------------------------
 
-function cell(
-	character: string,
-	index: number,
-	localIndex: number,
-	remoteColor: string | undefined,
-	key: string,
-): ReactElement {
-	const isLocal = index === localIndex;
+interface CellProps {
+	character: string;
+	key: string;
+	/** True when the local cursor sits on this character. */
+	isLocalCursor: boolean;
+	/** Set when a remote cursor sits here — their color. */
+	remoteColor: string | undefined;
+	/** Set only while the authorship lens is on — who wrote this character. */
+	authorColor: string | undefined;
+}
+
+// A cursor sitting on a character always wins over the authorship tint: where
+// someone is is more urgent than who typed it, and the two would fight for the
+// same color slot.
+function cell({
+	character,
+	key,
+	isLocalCursor,
+	remoteColor,
+	authorColor,
+}: CellProps): ReactElement {
 	const display = character === "" || character === "\n" ? " " : character;
 
-	if (isLocal && remoteColor !== undefined) {
+	if (isLocalCursor && remoteColor !== undefined) {
 		return (
 			<Text
 				key={key}
@@ -397,7 +468,7 @@ function cell(
 			</Text>
 		);
 	}
-	if (isLocal) {
+	if (isLocalCursor) {
 		return (
 			<Text key={key} inverse>
 				{display}
@@ -411,7 +482,11 @@ function cell(
 			</Text>
 		);
 	}
-	return <Text key={key}>{display}</Text>;
+	return (
+		<Text key={key} color={authorColor}>
+			{display}
+		</Text>
+	);
 }
 
 interface EditorProps {
@@ -423,8 +498,28 @@ interface EditorProps {
 export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const { exit } = useApp();
 	const { stdin, setRawMode } = useStdin();
+	const { stdout } = useStdout();
 	const { rows: terminalRows, columns: terminalColumns } = useWindowSize();
 	const textWidth = Math.max(MIN_WIDTH, terminalColumns - CHROME_COLUMNS);
+	// The authorship lens: off by default, because a permanently multi-colored
+	// draft is harder to read than the plain one.
+	const [showAuthors, setShowAuthors] = useState(false);
+	// Where the view sits when the reader has taken it somewhere the cursor
+	// isn't. Undefined means "follow the cursor", which is the resting state —
+	// typing anything puts it back.
+	const [scrolledTo, setScrolledTo] = useState<number>();
+	const {
+		armed: quitArmed,
+		press: pressQuit,
+		cancel: cancelQuit,
+	} = useConfirmQuit();
+	// What the key and mouse handlers need to know about a render they can't see.
+	const view = useRef({
+		startRow: 0,
+		visibleRows: 1,
+		totalRows: 1,
+		gutterColumn: 1,
+	});
 	const [, setVersion] = useState(0);
 	const localOps = useRef(0);
 
@@ -440,18 +535,33 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 
 		session.text.observe(onText);
 		session.awareness.on("change", bump);
-		session.messages.observe(bump);
 		session.readyFlags.observe(bump);
 		// The server reassigns colors as people come and go.
 		session.colors.observe(bump);
 		return () => {
 			session.text.unobserve(onText);
 			session.awareness.off("change", bump);
-			session.messages.unobserve(bump);
 			session.readyFlags.unobserve(bump);
 			session.colors.unobserve(bump);
 		};
 	}, [session]);
+
+	// Ask the terminal for mouse reports, and give the mouse back on the way out.
+	// Ink's unmount covers a clean quit; the exit hook covers the paths that skip
+	// it, since a terminal left in reporting mode prints `[<0;12;4M` at the shell
+	// on every click and needs a `reset` to recover.
+	useEffect(() => {
+		if (stdin === undefined) return;
+		stdout.write(MOUSE_ON);
+		const restore = (): void => {
+			stdout.write(MOUSE_OFF);
+		};
+		process.once("exit", restore);
+		return () => {
+			restore();
+			process.off("exit", restore);
+		};
+	}, [stdin, stdout]);
 
 	// Drive editing from the raw terminal byte stream (see applyKey above).
 	useEffect(() => {
@@ -459,22 +569,78 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		setRawMode(true);
 		const onData = (chunk: Buffer | string) => {
 			const data = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-			tokenize(data).forEach((token) =>
-				applyKey(session, token, exit, textWidth),
-			);
+			// Moves the view without touching the cursor, clamped to the draft.
+			const scrollBy = (lines: number): void => {
+				const { startRow, visibleRows, totalRows } = view.current;
+				const furthest = Math.max(0, totalRows - visibleRows);
+				setScrolledTo(Math.max(0, Math.min(furthest, startRow + lines)));
+			};
+
+			// A press anywhere on the gutter jumps proportionally: click near the
+			// top and you're near the top of the draft. Motion with the button held
+			// arrives the same way, so the thumb drags for free.
+			const scrollToGutter = (report: MouseReport): void => {
+				const { visibleRows, totalRows, gutterColumn } = view.current;
+				if (report.column !== gutterColumn) return;
+				const offset = report.row - (HEADER_ROWS + 1);
+				if (offset < 0 || offset >= visibleRows) return;
+				const furthest = Math.max(0, totalRows - visibleRows);
+				const reach = Math.max(1, visibleRows - 1);
+				setScrolledTo(Math.round((offset / reach) * furthest));
+			};
+
+			const handleMouse = (report: MouseReport): void => {
+				if (report.button === WHEEL_UP) scrollBy(-WHEEL_STEP);
+				else if (report.button === WHEEL_DOWN) scrollBy(WHEEL_STEP);
+				else if (
+					report.pressed &&
+					(report.button === LEFT_BUTTON || report.button === LEFT_BUTTON_HELD)
+				) {
+					scrollToGutter(report);
+				}
+			};
+
+			tokenize(data).forEach((token) => {
+				const mouse = parseMouse(token);
+				if (mouse !== undefined) {
+					handleMouse(mouse);
+					return;
+				}
+				// These three are handled here rather than in applyKey: they change
+				// how the draft is drawn, not what it says, so they never touch the
+				// document.
+				if (token === TOGGLE_AUTHORS) {
+					setShowAuthors((shown) => !shown);
+					return;
+				}
+				if (token === PAGE_UP || token === PAGE_DOWN) {
+					const page = Math.max(1, view.current.visibleRows - PAGE_OVERLAP);
+					scrollBy(token === PAGE_UP ? -page : page);
+					return;
+				}
+				if (token === QUIT) {
+					if (pressQuit()) exit();
+					return;
+				}
+				// Any other key means they've thought better of quitting.
+				cancelQuit();
+				// It's an edit or a cursor move, so the view goes back to wherever the
+				// cursor is — you can't type off-screen.
+				setScrolledTo(undefined);
+				applyKey(session, token, textWidth);
+			});
 		};
 		stdin.on("data", onData);
 		return () => {
 			stdin.off("data", onData);
 			setRawMode(false);
 		};
-	}, [stdin, setRawMode, exit, session, textWidth]);
+	}, [stdin, setRawMode, exit, session, textWidth, pressQuit, cancelQuit]);
 
 	// ---- Render straight from Yjs ----
 	const text = session.text.toString();
 	const localIndex = session.getLocalIndex();
 	const remoteCursors = session.getRemoteCursors();
-	const sentMessages = session.messages.toArray();
 	const localReady = session.isReady();
 	// Only humans gate the send — agents appear in the legend but not the tally.
 	const { ready: readyCount, total: participantCount } = session.readyTally();
@@ -488,27 +654,47 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		}
 	});
 
+	// Only paid for while the lens is on. One color lookup per author rather than
+	// per character, since a draft is mostly long runs by the same person.
+	const authors = showAuthors ? session.getAuthors() : undefined;
+	const authorColors = new Map<number, string | undefined>();
+	function authorColorAt(index: number): string | undefined {
+		const clientId = authors?.[index];
+		if (clientId === undefined) return undefined;
+		if (!authorColors.has(clientId)) {
+			authorColors.set(clientId, session.colorFor(clientId));
+		}
+		return authorColors.get(clientId);
+	}
+
 	const rows = computeRows(text, textWidth);
 
-	// Height follows the draft, clamped at both ends (see MIN_ROWS above).
-	const maxRows = Math.max(
-		MIN_ROWS,
-		Math.floor(terminalRows * MAX_HEIGHT_SHARE),
-	);
-	const visibleRows = Math.min(Math.max(rows.length, MIN_ROWS), maxRows);
+	// The draft fills whatever the chrome leaves, however short it is.
+	const visibleRows = Math.max(MIN_ROWS, terminalRows - CHROME_ROWS);
 
-	// Vertical window so the local cursor stays in view once the box stops growing.
+	// Vertical window. Normally it follows the cursor; while the reader has
+	// paged away from it, their position wins — clamped here rather than when it
+	// was set, since the draft may have grown or shrunk underneath them.
 	const localRow = rowOfIndex(rows, localIndex);
+	const furthestStart = Math.max(0, rows.length - visibleRows);
 	let startRow = 0;
-	if (rows.length > visibleRows) {
+	if (scrolledTo !== undefined) {
+		startRow = Math.max(0, Math.min(scrolledTo, furthestStart));
+	} else if (rows.length > visibleRows) {
 		startRow = Math.max(
 			0,
-			Math.min(
-				localRow - Math.floor(visibleRows / 2),
-				rows.length - visibleRows,
-			),
+			Math.min(localRow - Math.floor(visibleRows / 2), furthestStart),
 		);
 	}
+
+	// Read back by the handlers on the next keypress or mouse report. The gutter
+	// column is 1-based: one column of app padding, then the text, then the bar.
+	view.current = {
+		startRow,
+		visibleRows,
+		totalRows: rows.length,
+		gutterColumn: textWidth + 2,
+	};
 
 	const rendered: ReactNode[] = [];
 	for (let vr = 0; vr < visibleRows; vr++) {
@@ -521,7 +707,13 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		const spans: ReactNode[] = [];
 		for (let i = row.start; i < row.end; i++) {
 			spans.push(
-				cell(text[i], i, localIndex, remoteByIndex.get(i), `${vr}:${i}`),
+				cell({
+					character: text[i],
+					key: `${vr}:${i}`,
+					isLocalCursor: i === localIndex,
+					remoteColor: remoteByIndex.get(i),
+					authorColor: authorColorAt(i),
+				}),
 			);
 		}
 		const showTrailing = row.hasNewline || globalRow === rows.length - 1;
@@ -530,13 +722,13 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 			(localIndex === row.end || remoteByIndex.has(row.end))
 		) {
 			spans.push(
-				cell(
-					" ",
-					row.end,
-					localIndex,
-					remoteByIndex.get(row.end),
-					`${vr}:trail`,
-				),
+				cell({
+					character: " ",
+					key: `${vr}:trail`,
+					isLocalCursor: localIndex === row.end,
+					remoteColor: remoteByIndex.get(row.end),
+					authorColor: undefined,
+				}),
 			);
 		}
 		if (spans.length === 0) {
@@ -550,20 +742,37 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		);
 	}
 
+	// The gutter: a thumb sized by how much of the draft is on screen, positioned
+	// by how far down it you are. Blank rather than absent when it all fits, so
+	// the column stays reserved and the text never reflows.
+	const scrollable = rows.length > visibleRows;
+	const thumbRows = scrollable
+		? Math.max(1, Math.round((visibleRows * visibleRows) / rows.length))
+		: 0;
+	const thumbStart =
+		furthestStart === 0
+			? 0
+			: Math.round((startRow / furthestStart) * (visibleRows - thumbRows));
+
+	const gutter: ReactNode[] = [];
+	for (let vr = 0; vr < visibleRows; vr++) {
+		if (!scrollable) {
+			gutter.push(<Text key={vr}> </Text>);
+			continue;
+		}
+		const onThumb = vr >= thumbStart && vr < thumbStart + thumbRows;
+		gutter.push(
+			<Text key={vr} color="gray" dimColor={!onThumb}>
+				{onThumb ? "┃" : "│"}
+			</Text>,
+		);
+	}
+
 	return (
 		<Box flexDirection="column">
-			{sentMessages.length > 0 && (
-				<Box flexDirection="column">
-					<Text color="gray">┄ sent to the agent ┄</Text>
-					{sentMessages.map((message, index) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: the log is append-only, so a row's index never changes
-						<Text key={index} wrap="truncate">
-							<Text color="cyan">▸ </Text>
-							{message}
-						</Text>
-					))}
-				</Box>
-			)}
+			{/* The sent-message log used to sit here. It's still in the document and
+			    still on the server's screen — it just doesn't compete with the draft
+			    for height any more. */}
 			{/* Heavy rules above and below, no sides — the draft runs the full
 			    width of the terminal between them. */}
 			<Box
@@ -571,10 +780,15 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 				borderLeft={false}
 				borderRight={false}
 				borderColor={everyoneReady ? "green" : "gray"}
-				width={textWidth}
-				flexDirection="column"
+				width={textWidth + 1}
+				flexDirection="row"
 			>
-				{rendered}
+				<Box width={textWidth} flexDirection="column">
+					{rendered}
+				</Box>
+				<Box width={1} flexDirection="column">
+					{gutter}
+				</Box>
 			</Box>
 			{/* The footer: where the draft stands, then who's here, then the keys.
 			    The invite sits beside the ready count because both are things you
@@ -614,8 +828,23 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 					<Text color="gray"> · no one else here yet</Text>
 				)}
 			</Text>
-			<Text color="gray" wrap="truncate-end">
-				←→ move · ⌥←→ word · ⌘←→ line · ⌫ delete · ⌃z/⌃y undo · ⌃c quit
+			{/* The ⌃t hint doubles as the lens's only indicator: lit while it's on,
+			    so a multi-colored draft always has something saying why. */}
+			<Text wrap="truncate-end">
+				<Text color="gray">
+					←→ move · ⌥/⌘←→ word/line · ⇞⇟ scroll · ⇧drag select · ⌃z/⌃y undo ·{" "}
+				</Text>
+				<Text color={showAuthors ? "cyan" : "gray"} bold={showAuthors}>
+					⌃t authors
+				</Text>
+				{quitArmed ? (
+					<Text color="yellow" bold>
+						{" "}
+						· ⌃c again to quit
+					</Text>
+				) : (
+					<Text color="gray"> · ⌃c quit</Text>
+				)}
 			</Text>
 		</Box>
 	);

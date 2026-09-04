@@ -51,6 +51,18 @@ Hosting takes no `--handle`, because nobody is drafting under it. To host
 **and** take part, run `muc serve` in one terminal and `muc connect <code>` in
 another.
 
+Every draft the room signs off on is written to `sessions/`, relative to
+wherever you ran `muc serve`:
+
+```
+sessions/2026-08-24T22-50-13Z--a1b2c3d4.md
+```
+
+The name is the time it was sent plus a short hash of the content, so two drafts
+sent in the same second can't collide and the same text sent twice is
+recognisable at a glance. The directory is gitignored — a session's drafts are
+nobody's business but the people who were in it.
+
 ## Join a session
 
 Pass the code the host gave you:
@@ -96,9 +108,17 @@ muc solo
 ```
 move   ←→ char · ⌥←→ word · ⌘←→ line · ⌘↑↓ doc
 edit   ⌫ char · ⌥⌫ word · ⌘⌫ line · ⏎ newline
-       ⌃z undo · ⌃y redo · ⌃c quit
+       ⌃z undo · ⌃y redo · ⌃c ⌃c quit (twice, in quick succession)
+view   ⇞⇟ or the scroll wheel move the draft without moving the cursor —
+       typing snaps back. Click the scrollbar to jump.
+       ⌃t authorship — tint each character in the color of whoever wrote it
 send   ⌃s toggle ready — the server sends once everyone is ready
 ```
+
+> **Known gap:** while `muc` is running it captures the mouse in order to read
+> the wheel, so the terminal's own click-drag selection is disabled — hold
+> **Shift** to select text meanwhile. Selection is being reimplemented in-app
+> (with OSC 52 for the clipboard); until then, `⇞`/`⇟` work without the mouse.
 
 > **Note:** `⌃s` (Ctrl+S) is the reliable "ready" chord and works in every
 > terminal. `⇧⏎`/`⌥⏎` (Shift/Option+Enter) also toggle ready in terminals that
