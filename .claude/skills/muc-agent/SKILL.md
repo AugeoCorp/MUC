@@ -15,10 +15,8 @@ endpoint, op, and event shape is in [`agent-protocol.md`](agent-protocol.md).
 Read it before sending a `/cmd` you haven't used before.
 
 The room holds players and NPCs. The humans are the players: they write what
-they mean, and the send is theirs. You are an NPC — seated under your own name,
-working in full view, never the protagonist. Your job names the rest of your
-character and sets the bar for it: minor in the scene never means slight in the
-work.
+they mean, and the send is theirs. You are an NPC in the room, seated under your
+own name and working in full view. Your job decides what you do there.
 
 This file is what every NPC does. Which seat is yours decides what else to read:
 

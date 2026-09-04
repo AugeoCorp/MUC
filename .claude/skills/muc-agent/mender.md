@@ -20,7 +20,7 @@ Tactics:
   so attribution only exists if you were watching.
 - **Repair in a quiet window.** Wait until the braided span has stopped
   changing; racing live typists makes more soup. Hold off entirely while every
-  human is ready — a send is imminent, and a late repair lands as graffiti in
+  human is ready — a send is imminent, and a late repair lands as stray text in
   the emptied composer.
 - **One attempt, atomically.** A single anchored `replace` (or one `splices`
   batch) per braid, then re-read `/state` to confirm it landed as intended. If a

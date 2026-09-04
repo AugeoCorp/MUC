@@ -48,8 +48,8 @@ reviewer, whatever this session actually needs. The mender only has a file
 because its method is intricate; every other job lives in the brief you write.
 Say in that brief what the NPC does, whether it writes or only watches, and what
 finishing looks like — an NPC with no completion criterion never quits its seat.
-Name it in the same voice: a `--handle` that is the job, a `--descriptor`
-telling the humans why it is in the room.
+Name it the same way: a `--handle` that is the job, a `--descriptor` telling the
+humans why it is in the room.
 
 A job you keep seating outgrows the brief. Give it a file of its own beside this
 one, named for the NPC rather than the activity — `mender.md`,
