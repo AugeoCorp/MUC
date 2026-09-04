@@ -19,6 +19,8 @@ const agent = (name: string): UserInfo => ({
 	color: "magenta",
 	kind: "agent",
 });
+// Never published, so its kind is moot — but the type wants one.
+const serverUser: UserInfo = { name: "muc", color: "gray", kind: "human" };
 
 const sessions: CollabSession[] = [];
 function track(session: CollabSession): CollabSession {
@@ -68,6 +70,7 @@ function createHub(endpointCount: number): Channel[] {
 				if (otherIndex === index) return;
 				other.forEach((listener) => listener(frame));
 			});
+			return Promise.resolve();
 		},
 		subscribe(listener) {
 			log.forEach((entry) => {
@@ -78,6 +81,7 @@ function createHub(endpointCount: number): Channel[] {
 		},
 		disconnect() {
 			own.clear();
+			return Promise.resolve();
 		},
 	}));
 }
@@ -88,7 +92,7 @@ function setText(session: CollabSession, value: string): void {
 
 describe("isHuman", () => {
 	it("treats an absent kind as human, so old clients still gate the send", () => {
-		expect(isHuman({ name: "legacy", color: "cyan" })).toBe(true);
+		expect(isHuman({})).toBe(true);
 		expect(isHuman(human("kirby"))).toBe(true);
 		expect(isHuman(agent("scribe"))).toBe(false);
 	});
@@ -131,13 +135,9 @@ describe("presence at creation", () => {
 			createCollabSession(channelA, human("kirby"), { role: "participant" }),
 		);
 		track(
-			createCollabSession(
-				channelB,
-				{ name: "muc", color: "gray" },
-				{
-					role: "server",
-				},
-			),
+			createCollabSession(channelB, serverUser, {
+				role: "server",
+			}),
 		);
 		expect(participant.getRemoteCursors()).toEqual([]);
 	});
@@ -165,9 +165,12 @@ describe("ready quorum", () => {
 	});
 
 	it("is ready on an agent's session once every human is, without the agent", () => {
-		const [humanSession, agentSession] = createPair(
-			human("kirby"),
-			agent("scribe"),
+		const [humanChannel, agentChannel] = createHub(2);
+		const humanSession = track(
+			createCollabSession(humanChannel, human("kirby")),
+		);
+		const agentSession = track(
+			createCollabSession(agentChannel, agent("scribe")),
 		);
 		expect(agentSession.isEveryoneReady()).toBe(false);
 		humanSession.setReady(true);
@@ -186,7 +189,7 @@ describe("ready quorum", () => {
 describe("server submit", () => {
 	it("appends the draft and clears the composer when all humans are ready", () => {
 		const [serverSession, participantSession] = createPair(
-			{ name: "muc", color: "gray" },
+			serverUser,
 			human("kirby"),
 			["server", "participant"],
 		);
@@ -199,11 +202,10 @@ describe("server submit", () => {
 	});
 
 	it("clears the participant's ready flag after a send", () => {
-		const [, participantSession] = createPair(
-			{ name: "muc", color: "gray" },
-			human("kirby"),
-			["server", "participant"],
-		);
+		const [, participantSession] = createPair(serverUser, human("kirby"), [
+			"server",
+			"participant",
+		]);
 		setText(participantSession, "draft");
 		participantSession.setReady(true);
 		expect(participantSession.isReady()).toBe(false);
@@ -212,13 +214,9 @@ describe("server submit", () => {
 	it("sends on the human's say-so alone when an agent is still drafting", () => {
 		const [serverChannel, humanChannel, agentChannel] = createHub(3);
 		const serverSession = track(
-			createCollabSession(
-				serverChannel,
-				{ name: "muc", color: "gray" },
-				{
-					role: "server",
-				},
-			),
+			createCollabSession(serverChannel, serverUser, {
+				role: "server",
+			}),
 		);
 		const humanSession = track(
 			createCollabSession(humanChannel, human("kirby"), {
@@ -238,32 +236,93 @@ describe("server submit", () => {
 		expect(agentSession.messages.toArray()).toEqual(["go"]);
 	});
 
-	it("sends when the draft lands after the room is already ready", () => {
+	it("never sends a keystroke the room did not sign off on", () => {
+		// An edit and the flag it withdraws are one update, so the server can't
+		// see the new text beside the old approval — however the frames travel.
+		const [serverChannel, aliceChannel, bobChannel] = createHub(3);
+		const serverSession = track(
+			createCollabSession(serverChannel, serverUser, { role: "server" }),
+		);
+		const alice = track(createCollabSession(aliceChannel, human("alice")));
+		const bob = track(createCollabSession(bobChannel, human("bob")));
+		alice.setReady(true);
+		bob.setReady(true);
+		alice.edit(() => alice.text.insert(0, "h"));
+		expect(serverSession.messages.toArray()).toEqual([]);
+		expect(alice.isReady()).toBe(false);
+		expect(bob.isReady()).toBe(true);
+		expect(serverSession.text.toString()).toBe("h");
+	});
+
+	it("hands the decision back when an agent edits a ready room", () => {
 		const [serverChannel, humanChannel, agentChannel] = createHub(3);
 		const serverSession = track(
-			createCollabSession(
-				serverChannel,
-				{ name: "muc", color: "gray" },
-				{ role: "server" },
-			),
+			createCollabSession(serverChannel, serverUser, { role: "server" }),
 		);
 		const humanSession = track(
-			createCollabSession(humanChannel, human("kirby"), {
-				role: "participant",
-			}),
+			createCollabSession(humanChannel, human("kirby")),
 		);
 		const agentSession = track(
-			createCollabSession(agentChannel, agent("scribe"), {
-				role: "participant",
-			}),
+			createCollabSession(agentChannel, agent("scribe")),
 		);
 		// Ready before there's anything to send — an agent then supplies the
-		// draft without touching any presence, so only a text-change re-check
-		// can complete the send.
+		// draft. It can't sign off for anyone, so the human's flag drops with
+		// the edit rather than the draft going out unread.
 		humanSession.setReady(true);
+		agentSession.edit(() => agentSession.text.insert(0, "go"));
 		expect(serverSession.messages.toArray()).toEqual([]);
-		setText(agentSession, "go");
+		expect(humanSession.isReady()).toBe(false);
+		expect(serverSession.getRemoteCursors()).toEqual([
+			expect.objectContaining({
+				user: expect.objectContaining({ name: "kirby" }),
+				ready: false,
+			}),
+			expect.objectContaining({
+				user: expect.objectContaining({ name: "scribe" }),
+				ready: false,
+			}),
+		]);
+		// The human reads it and signs off; now it sends.
+		humanSession.setReady(true);
 		expect(serverSession.messages.toArray()).toEqual(["go"]);
 		expect(humanSession.messages.toArray()).toEqual(["go"]);
+	});
+
+	it("drops a departed participant's flag so it can't hold the room ready", () => {
+		const [serverChannel, aliceChannel, bobChannel] = createHub(3);
+		const serverSession = track(
+			createCollabSession(serverChannel, serverUser, { role: "server" }),
+		);
+		const alice = track(createCollabSession(aliceChannel, human("alice")));
+		const bob = createCollabSession(bobChannel, human("bob"));
+		setText(alice, "draft");
+		bob.setReady(true);
+		bob.destroy();
+		expect(serverSession.readyFlags.size).toBe(0);
+		expect(serverSession.messages.toArray()).toEqual([]);
+		alice.setReady(true);
+		expect(serverSession.messages.toArray()).toEqual(["draft"]);
+	});
+});
+
+describe("ready tally", () => {
+	it("counts humans present and ready, local included", () => {
+		const [sessionA, sessionB] = createPair(human("a"), human("b"));
+		expect(sessionA.readyTally()).toEqual({ ready: 0, total: 2 });
+		sessionB.setReady(true);
+		expect(sessionA.readyTally()).toEqual({ ready: 1, total: 2 });
+	});
+
+	it("leaves agents and the server out of both numbers", () => {
+		const [serverChannel, humanChannel, agentChannel] = createHub(3);
+		const serverSession = track(
+			createCollabSession(serverChannel, serverUser, { role: "server" }),
+		);
+		track(createCollabSession(humanChannel, human("kirby")));
+		const agentSession = track(
+			createCollabSession(agentChannel, agent("scribe")),
+		);
+		expect(serverSession.readyTally()).toEqual({ ready: 0, total: 1 });
+		expect(agentSession.readyTally()).toEqual({ ready: 0, total: 1 });
 	});
 });

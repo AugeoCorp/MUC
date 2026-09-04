@@ -51,7 +51,7 @@ export function App({ user, connect, role, shareCode }: AppProps) {
 		return () => {
 			active = false;
 			live?.destroy();
-			channel?.disconnect();
+			void channel?.disconnect();
 		};
 	}, [connect, user, role]);
 

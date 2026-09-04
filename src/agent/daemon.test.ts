@@ -53,6 +53,7 @@ async function command(
 ): Promise<Record<string, unknown>> {
 	const response = await fetch(`${fixture.base}/cmd`, {
 		method: "POST",
+		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
 	return (await response.json()) as Record<string, unknown>;
@@ -206,6 +207,7 @@ describe("agent daemon", () => {
 		});
 		const response = await fetch(`http://127.0.0.1:${daemon.port}/cmd`, {
 			method: "POST",
+			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ op: "quit" }),
 		});
 		expect(((await response.json()) as { bye?: boolean }).bye).toBe(true);
@@ -223,5 +225,68 @@ describe("agent daemon", () => {
 			startAgentDaemon(session, { port: fixture.daemon.port }),
 		).rejects.toThrow();
 		session.destroy();
+	});
+
+	it("refuses a POST that is not declared as JSON, so a browser page can't drive it", async () => {
+		const fixture = await createFixture();
+		const response = await fetch(`${fixture.base}/cmd`, {
+			method: "POST",
+			body: JSON.stringify({ op: "appendLine", line: "injected" }),
+		});
+		expect(response.status).toBe(415);
+		expect(fixture.agentSession.text.toString()).toBe("");
+	});
+
+	it("rejects fractional indices instead of handing them to the doc", async () => {
+		const fixture = await createFixture();
+		await command(fixture, { op: "appendLine", line: "steady" });
+		const result = await command(fixture, {
+			op: "deleteRange",
+			index: 1.5,
+			count: 2,
+		});
+		expect(result.ok).toBe(false);
+		expect(fixture.agentSession.text.toString()).toBe("steady\n");
+	});
+
+	it("flags a gap when a cursor predates the event buffer", async () => {
+		const fixture = await createFixture();
+		// Every ready flip is a roster event; overflow the buffer with them.
+		Array.from({ length: 520 }).forEach((_, index) => {
+			fixture.humanSession.setReady(index % 2 === 0);
+		});
+		const stale = (await (
+			await fetch(`${fixture.base}/events?since=0`)
+		).json()) as {
+			gap: boolean;
+			seq: number;
+		};
+		expect(stale.gap).toBe(true);
+		const current = (await (
+			await fetch(`${fixture.base}/events?since=${stale.seq}`)
+		).json()) as { gap: boolean; events: unknown[] };
+		expect(current.gap).toBe(false);
+		expect(current.events).toEqual([]);
+	});
+
+	it("treats a garbage wait as no wait rather than a NaN timer", async () => {
+		const fixture = await createFixture();
+		const started = Date.now();
+		const response = await fetch(`${fixture.base}/events?since=0&wait=soon`);
+		expect(response.status).toBe(200);
+		expect(Date.now() - started).toBeLessThan(1_000);
+	});
+
+	it("reports ready flips through the roster feed", async () => {
+		const fixture = await createFixture();
+		fixture.humanSession.setReady(true);
+		const response = await fetch(`${fixture.base}/events?since=0&wait=2000`);
+		const feed = (await response.json()) as {
+			events: Array<{ type: string; participants?: Array<{ ready: boolean }> }>;
+		};
+		const roster = feed.events.filter((event) => event.type === "roster");
+		expect(roster.at(-1)?.participants).toEqual([
+			expect.objectContaining({ name: "kirby", ready: true }),
+		]);
 	});
 });

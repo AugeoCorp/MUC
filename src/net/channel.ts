@@ -7,17 +7,25 @@
 // quick tunnel won't reliably forward a long-lived server→client stream.
 
 export interface Channel {
-	/** Broadcast a frame to every other participant. */
-	post(frame: unknown): void;
+	/**
+	 * Broadcast a frame to every other participant. Frames leave in the order
+	 * they were posted; the promise settles once this one has been handed off.
+	 */
+	post(frame: unknown): Promise<void>;
 	/** Register a listener for inbound frames; returns an unsubscribe. */
 	subscribe(listener: (frame: unknown) => void): () => void;
-	/** Stop polling and drop all listeners. */
-	disconnect(): void;
+	/** Stop polling and drop all listeners, once every posted frame is out. */
+	disconnect(): Promise<void>;
 }
 
 // How often we ask the relay for anything new. Fast enough to feel live, slow
 // enough to stay cheap.
 const POLL_INTERVAL = 800;
+
+// How long one POST may take before it is abandoned. Posts go out one at a
+// time so their order holds, which means one that hangs would hold up every
+// frame behind it.
+const POST_TIMEOUT = 10_000;
 
 interface MessagesResponse {
 	cursor: number;
@@ -64,20 +72,32 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 
 	const timer = setInterval(() => void poll(), POLL_INTERVAL);
 
+	// One POST at a time. Two in flight at once can land at the relay in either
+	// order, and an edit overtaking the flag it withdrew is exactly the kind of
+	// reorder the session must never see.
+	let outbound: Promise<void> = Promise.resolve();
+
 	return {
 		post(frame) {
-			void fetch(sendUrl, {
-				method: "POST",
-				body: JSON.stringify(frame),
-			}).catch(() => undefined);
+			outbound = outbound.then(() =>
+				fetch(sendUrl, {
+					method: "POST",
+					body: JSON.stringify(frame),
+					signal: AbortSignal.timeout(POST_TIMEOUT),
+				})
+					.then(() => undefined)
+					.catch(() => undefined),
+			);
+			return outbound;
 		},
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
-		disconnect() {
+		async disconnect() {
 			clearInterval(timer);
 			listeners.clear();
+			await outbound;
 		},
 	};
 }
@@ -94,6 +114,7 @@ export function createChannelPair(): [Channel, Channel] {
 	): Channel => ({
 		post(frame) {
 			other.forEach((listener) => listener(frame));
+			return Promise.resolve();
 		},
 		subscribe(listener) {
 			own.add(listener);
@@ -101,6 +122,7 @@ export function createChannelPair(): [Channel, Channel] {
 		},
 		disconnect() {
 			own.clear();
+			return Promise.resolve();
 		},
 	});
 	return [endpoint(listenersA, listenersB), endpoint(listenersB, listenersA)];
@@ -111,13 +133,16 @@ export function createChannelPair(): [Channel, Channel] {
 export function createLocalChannel(): Channel {
 	const listeners = new Set<(frame: unknown) => void>();
 	return {
-		post() {},
+		post() {
+			return Promise.resolve();
+		},
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
 		disconnect() {
 			listeners.clear();
+			return Promise.resolve();
 		},
 	};
 }

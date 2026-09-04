@@ -1,9 +1,10 @@
 # System
 
-The supervising seat's job: start your own client, and seat whatever other NPCs
-the work needs. Everything about driving a seat once you hold a port — the drive
-loop, the room's rules, leaving — is [`SKILL.md`](SKILL.md), and applies to your
-seat like every other.
+The supervising seat. Your primary job is to delegate rather than to write: see
+what the draft needs, seat an NPC for it, and keep the room's record of who did
+what. Everything about driving a seat once you hold a port (the drive loop, the
+room's rules, leaving) is [`SKILL.md`](SKILL.md), and applies to your seat like
+every other.
 
 ## Start your client
 
@@ -22,42 +23,42 @@ why — report it rather than retrying blindly.
 
 Then pick up the drive loop in [`SKILL.md`](SKILL.md).
 
-## More NPCs
+## Seat NPCs
 
-One `muc agent` process is one participant. To put more NPCs at the box, run
-`scripts/start.sh` once per job — each with its own `--handle`, a `--descriptor`
-naming the job (that note is what the humans in the room see), and its own port
-from its own handshake. Delegate each port to its own subagent, and brief it
-with the job, the port, and [`SKILL.md`](SKILL.md) — plus
-[`mender.md`](mender.md) if the job is mending. A delegated NPC never runs this
-file: you already started its client, so one that launches its own seats a
-duplicate.
+One `muc agent` process is one participant. Each NPC gets its own client from
+`scripts/start.sh`, with a `--handle` that is its job, a `--descriptor` telling
+the humans why it is in the room, and its own port from its own handshake.
+Delegate that port to its own subagent, briefed with the job, the port, and
+[`SKILL.md`](SKILL.md). A delegated NPC never runs this file: you already
+started its client, so one that launches its own seats a duplicate.
 
-Never point two drivers at one port: the daemon serializes ops, but two writers
-steering one cursor still fight.
+One port, one driver: the daemon serializes ops, but two writers steering one
+cursor still fight.
 
-Three jobs come up often enough to have names:
+NPCs emerge from what the session needs, not from a fixed cast. A TODO that
+wants expanding, a claim that wants checking, a passage in the wrong language:
+each is a job, and a job is a seat when the room should see it working. It runs
+while you do something else, or its output belongs in the draft under its own
+name. Work you would finish before anyone looked up needs no seat; do it from
+yours.
 
-- **Drafter** — contributes and revises content on request.
-- **Mender** — whenever agents draft, also seat one mender on the smallest
-  capable model; its job is [`mender.md`](mender.md).
-- **Watcher** — follows the feed and reports elsewhere; never writes.
+A brief should let the NPC work out the specifics itself: what it is for,
+whether it may write, and what finishing looks like. An NPC with no completion
+criterion never quits its seat.
 
-Any other job takes a seat the same way: a fact-checker, a translator, a domain
-reviewer, whatever this session actually needs. The mender only has a file
-because its method is intricate; every other job lives in the brief you write.
-Say in that brief what the NPC does, whether it writes or only watches, and what
-finishing looks like — an NPC with no completion criterion never quits its seat.
-Name it in the same voice: a `--handle` that is the job, a `--descriptor`
-telling the humans why it is in the room.
+The one NPC with a file of its own is the mender. Whenever agents draft, also
+seat one, on the smallest capable model, and hand it [`mender.md`](mender.md)
+with `SKILL.md`. A job you keep seating outgrows its brief the same way; give it
+a file beside this one, named for the NPC rather than the activity (`mender.md`,
+`fact-checker.md`, `npc-fixer.md`).
 
-A job you keep seating outgrows the brief. Give it a file of its own beside this
-one, named for the NPC rather than the activity — `mender.md`,
-`fact-checker.md`, `npc-fixer.md` — and hand it over with `SKILL.md`.
-
-Seat a job when the room should see it working — it runs while you do something
-else, or its output belongs in the draft under its own name. Work you would
-finish before anyone looked up needs no seat; do it from yours.
-
-Quit each client the moment its job ends — a seat with no job is noise in the
+Quit each client the moment its job ends; a seat with no job is noise in the
 room.
+
+## Keep the cast list
+
+At the end of the draft, keep a list of the NPCs that contributed to it: the
+name, then two short sentences, what it was seated to do and what it ended up
+doing. Update it as seats come and go. It ships with the message, so whoever
+reads the message knows who worked on it and how far the work drifted from the
+brief.

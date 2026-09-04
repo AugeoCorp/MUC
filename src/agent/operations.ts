@@ -1,7 +1,8 @@
 // Edit operations an agent can perform against a CollabSession. These mirror
-// the human Editor's applyKey semantics — every edit is a LOCAL_ORIGIN
-// transaction and clears the ready flag — but are shaped for programmatic use:
-// atomic where possible, explicit about cursor movement.
+// the human Editor's applyKey semantics — every edit goes through
+// `session.edit`, one LOCAL_ORIGIN transaction that also withdraws the ready
+// flags it invalidates — but are shaped for programmatic use: atomic where
+// possible, explicit about cursor movement.
 //
 // Lessons from the first live swarm session are baked in:
 // - `replace` must NOT move the local cursor. The cursor is a Yjs relative
@@ -11,7 +12,8 @@
 //   participants' typing ("CRDT soup"). `appendLine` posts a whole line in one
 //   transaction and is the preferred way for an agent to speak.
 
-import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
+import type { CollabSession } from "../collab/session.ts";
+import { clamp } from "../utilities/clamp.ts";
 
 export interface ReplaceOptions {
 	/** Exact text to find (first occurrence). */
@@ -31,10 +33,6 @@ export interface Splice {
 	insert: string;
 }
 
-function clamp(value: number, low: number, high: number): number {
-	return Math.max(low, Math.min(value, high));
-}
-
 /**
  * Append `line` as its own line at the end of the document, atomically. The
  * collision-safe way for an agent to say something.
@@ -43,11 +41,7 @@ export function appendLine(session: CollabSession, line: string): void {
 	const text = session.text.toString();
 	const needsLeadingNewline = text.length > 0 && !text.endsWith("\n");
 	const value = `${needsLeadingNewline ? "\n" : ""}${line}\n`;
-	session.doc.transact(
-		() => session.text.insert(session.text.length, value),
-		LOCAL_ORIGIN,
-	);
-	session.setReady(false);
+	session.edit(() => session.text.insert(session.text.length, value));
 }
 
 /**
@@ -69,39 +63,41 @@ export function replaceText(
 	}
 	const index = text.indexOf(options.find, from);
 	if (index === -1) return { miss: "find" };
-	session.doc.transact(() => {
+	session.edit(() => {
 		session.text.delete(index, options.find.length);
 		session.text.insert(index, options.insert);
-	}, LOCAL_ORIGIN);
-	session.setReady(false);
+	});
 	return { index };
 }
 
 /**
  * Apply several splices in one transaction. Indices refer to the document as
  * it stands before the batch; splices are applied highest-index first so
- * earlier ones don't shift later ones. Overlapping splices are the caller's
- * mistake.
+ * earlier ones don't shift later ones. Splices at the same index land in the
+ * order given. Overlapping splices are the caller's mistake.
  */
 export function applySplices(session: CollabSession, splices: Splice[]): void {
 	const length = session.text.length;
-	const ordered = [...splices].sort((a, b) => b.at - a.at);
-	session.doc.transact(() => {
+	// Applying the later of two same-index splices first is what leaves the
+	// earlier one in front of it.
+	const ordered = splices
+		.map((splice, position) => ({ splice, position }))
+		.sort((a, b) => b.splice.at - a.splice.at || b.position - a.position)
+		.map((entry) => entry.splice);
+	session.edit(() => {
 		ordered.forEach((splice) => {
 			const at = clamp(splice.at, 0, length);
 			const remove = clamp(splice.remove, 0, length - at);
 			if (remove > 0) session.text.delete(at, remove);
 			if (splice.insert !== "") session.text.insert(at, splice.insert);
 		});
-	}, LOCAL_ORIGIN);
-	session.setReady(false);
+	});
 }
 
 /** Insert at the local cursor and advance it — one keystroke's worth. */
 export function insertAtCursor(session: CollabSession, value: string): void {
 	const index = session.getLocalIndex();
-	session.doc.transact(() => session.text.insert(index, value), LOCAL_ORIGIN);
-	session.setReady(false);
+	session.edit(() => session.text.insert(index, value));
 	session.publishCursor(index + value.length);
 }
 
@@ -115,8 +111,7 @@ export function deleteRange(
 	const at = clamp(index, 0, length);
 	const removed = clamp(count, 0, length - at);
 	if (removed === 0) return;
-	session.doc.transact(() => session.text.delete(at, removed), LOCAL_ORIGIN);
-	session.setReady(false);
+	session.edit(() => session.text.delete(at, removed));
 	session.publishCursor(at);
 }
 
@@ -134,8 +129,8 @@ function sleep(milliseconds: number): Promise<void> {
 /**
  * Human-paced typing at the live cursor: one character per transaction so
  * remote participants watch the text arrive. Interleaves with concurrent
- * typing at the same position — prefer `appendLine` unless the theater is the
- * point. Callers should serialize this behind the daemon's operation queue.
+ * typing at the same position — prefer `appendLine` unless visible typing is
+ * the point. Callers should serialize this behind the daemon's operation queue.
  */
 export async function typeText(
 	session: CollabSession,

@@ -16,11 +16,7 @@ import { Box, Text, useApp, useStdin, useWindowSize } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
-import {
-	type CollabSession,
-	isHuman,
-	LOCAL_ORIGIN,
-} from "../collab/session.ts";
+import { type CollabSession, LOCAL_ORIGIN } from "../collab/session.ts";
 import { Participant } from "./Participant.tsx";
 
 // The box spans the terminal: only the app's own padding (1 each side) sits
@@ -210,26 +206,29 @@ export function applyKey(
 	exit: () => void,
 	width: number,
 ): void {
-	// Every edit clears the ready flag: changing the draft means you're no longer
-	// signed off on it. setReady(false) is a no-op when already un-ready.
+	// Every edit withdraws the ready flag: changing the draft means you're no
+	// longer signed off on it. session.edit does both in one update.
 	const insert = (index: number, value: string): void => {
-		session.doc.transact(() => session.text.insert(index, value), LOCAL_ORIGIN);
-		session.setReady(false);
+		session.edit(() => session.text.insert(index, value));
 	};
 	const remove = (index: number, count: number): void => {
-		session.doc.transact(() => session.text.delete(index, count), LOCAL_ORIGIN);
-		session.setReady(false);
+		session.edit(() => session.text.delete(index, count));
 	};
 
 	if (seq === "\x03") {
 		exit(); // Ctrl+C
 		return;
 	}
+	// Undo and redo change the draft like any edit, so they withdraw the flag
+	// too — ahead of the change, so no one ever sees the flag beside the new
+	// text (the undo manager runs its own transaction, which can't be joined).
 	if (seq === "\x1a") {
+		session.setReady(false);
 		session.undoManager.undo(); // Ctrl+Z
 		return;
 	}
 	if (seq === "\x19") {
+		session.setReady(false);
 		session.undoManager.redo(); // Ctrl+Y
 		return;
 	}
@@ -442,12 +441,14 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 		session.text.observe(onText);
 		session.awareness.on("change", bump);
 		session.messages.observe(bump);
+		session.readyFlags.observe(bump);
 		// The server reassigns colors as people come and go.
 		session.colors.observe(bump);
 		return () => {
 			session.text.unobserve(onText);
 			session.awareness.off("change", bump);
 			session.messages.unobserve(bump);
+			session.readyFlags.unobserve(bump);
 			session.colors.unobserve(bump);
 		};
 	}, [session]);
@@ -476,12 +477,7 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const sentMessages = session.messages.toArray();
 	const localReady = session.isReady();
 	// Only humans gate the send — agents appear in the legend but not the tally.
-	const remoteHumans = remoteCursors.filter((cursor) => isHuman(cursor.user));
-	const participantCount =
-		(isHuman(session.user) ? 1 : 0) + remoteHumans.length;
-	const readyCount =
-		(isHuman(session.user) && localReady ? 1 : 0) +
-		remoteHumans.filter((cursor) => cursor.ready).length;
+	const { ready: readyCount, total: participantCount } = session.readyTally();
 	const everyoneReady = session.isEveryoneReady();
 
 	// index -> color for the first remote cursor sitting on each cell.

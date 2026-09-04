@@ -30,6 +30,8 @@ if command -v muc >/dev/null 2>&1; then
 elif npm view @augeo/muc version >/dev/null 2>&1; then
 	nohup npx -y @augeo/muc agent "$@" >"$stdout_file" 2>"$stderr_file" &
 else
+	# Pre-publish only: builds whatever the default branch holds. Once
+	# @augeo/muc is on npm this branch is never reached, and can go.
 	nohup npx -y github:AugeoCorp/MUC agent "$@" >"$stdout_file" 2>"$stderr_file" &
 fi
 pid=$!

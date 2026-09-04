@@ -1,6 +1,7 @@
 import { connect } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
+import { BODY_LIMIT_BYTES } from "../utilities/readBody.ts";
 import {
 	AWARENESS_RETENTION_MILLISECONDS,
 	DOCUMENT_COMPACTION_THRESHOLD,
@@ -179,6 +180,42 @@ describe("startRelay", () => {
 		expect(replay.items.length).toBe(2);
 		expect(replay.items[0]).toBe(bogus);
 		expect(rebuildText(replay.items.slice(1))).toBe(expectedText);
+	});
+
+	it("keeps an awareness frame between the document runs it separated", async () => {
+		const { frames, expectedText } = createDocumentFrames(
+			DOCUMENT_COMPACTION_THRESHOLD + 1,
+		);
+		const before = frames.slice(0, DOCUMENT_COMPACTION_THRESHOLD - 1);
+		const after = frames.slice(DOCUMENT_COMPACTION_THRESHOLD - 1);
+		const traffic = [...before, awarenessFrame("ready"), ...after];
+		await traffic.reduce(
+			(previous, frame) => previous.then(() => send(frame)),
+			Promise.resolve(),
+		);
+
+		// The threshold tripped on the last frame, so the run before the
+		// awareness frame merged. The frames after it must still follow it.
+		const replay = await fetchMessages(10);
+		const kinds = replay.items.map(
+			(item) => (JSON.parse(item) as { t: string }).t,
+		);
+		expect(kinds).toEqual(["u", "a", "u", "u"]);
+		expect(rebuildText(replay.items)).toBe(expectedText);
+	});
+
+	it("answers 413 to an oversized body and stays up", async () => {
+		const response = await fetch(`http://127.0.0.1:${relay.port}/send`, {
+			method: "POST",
+			body: "x".repeat(BODY_LIMIT_BYTES + 1),
+		}).catch(() => undefined);
+		// The relay tears the socket down mid-body; fetch may see the 413 or
+		// a reset, and either is a refusal.
+		if (response !== undefined) expect(response.status).toBe(413);
+
+		await send("alive");
+		const replay = await fetchMessages(0);
+		expect(replay.items).toEqual(["alive"]);
 	});
 
 	it("keeps a 500-frame session's replay bounded", async () => {
