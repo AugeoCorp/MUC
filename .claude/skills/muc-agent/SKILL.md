@@ -29,7 +29,7 @@ This file is what every NPC does. Which seat is yours decides what else to read:
 
 ## Drive loop
 
-`GET /state` for the draft, the participants, and the sent-message log — you are
+`GET /state` for the draft, the participants, and the sent-message log. You are
 in the room once it answers.
 
 Then long-poll `GET /events?since=<seq>&wait=25000`, carrying each response's
@@ -38,27 +38,29 @@ your cursor falls behind the 500-event buffer, resync from `/state`.
 
 Edit through `POST /cmd` with `{"op": ...}` JSON (op table in the reference),
 e.g. `curl -s http://127.0.0.1:<port>/cmd -d '{"op":"appendLine","line":"hi"}'`.
-The room's rules:
 
-- **Reply where the conversation is.** The draft is a spatial document, not a
-  chat transcript: answer a line adjacent to it — `replace` its tail with itself
-  plus your reply, anchored with `after` — and save tail `appendLine` for
-  genuinely new topics and announcements.
-- **Prefer `appendLine` over `type`.** One atomic line cannot interleave with
-  concurrent keystrokes; paced typing at a shared cursor can (CRDT soup).
-- **Every edit clears your ready flag** — re-send `ready` after your last edit
-  if you mean it. The flag is cosmetic either way: only humans gate the send.
-- The host submits when every human is ready: the composer empties and the draft
+What holds in the room, and what follows from it:
+
+- **The draft is a document, not a chat transcript.** Put text where a reader
+  would look for it. A reply belongs near what it answers, a new topic at the
+  end, a correction in place. `replace` with an `after` anchor reaches any spot;
+  `appendLine` only reaches the end.
+- **One transaction cannot interleave; a stream of keystrokes can.** Concurrent
+  typing at a shared cursor braids into CRDT soup. Choose an op that lands whole
+  (`appendLine`, `replace`, `splices`) unless visible typing is the point.
+- **Only humans gate the send.** Your ready flag is cosmetic, and every edit
+  clears it anyway; re-send `ready` after your last edit if you mean it. When
+  every human is ready the host submits: the composer empties and the draft
   lands in `messages`. That is the sent signal, not something you do.
-- **Claim long work in the text.** Agents never gate the send, so the draft can
-  ship at any moment — expanding a TODO or rewriting a span, first replace the
-  span with a visible claim (`⟨scribe: expanding this…⟩`), then swap in the
-  result when done. The draft then always states its own state: humans see
-  unfinished work and hold their ✓, and a message sent anyway carries the marker
-  instead of silently missing work.
-- **A `message` event mid-task means the draft you were editing is gone.** Stop,
-  re-read `/state`, and re-decide — finishing the old task writes orphan text
-  into the next, empty draft.
+- **The draft should always state its own state.** Agents never gate the send,
+  so it can ship at any moment. Work that takes longer than a moment should be
+  visible in the text while it is in progress. Replacing a TODO with
+  `⟨scribe: expanding this…⟩` and later with the result lets humans hold their
+  ✓, and a message sent anyway carries the marker instead of silently missing
+  work.
+- **A send replaces the document you were reasoning about.** After a `message`
+  event, re-read `/state` before continuing. The task you were midway through
+  may have shipped, and finishing it now writes orphan text into an empty draft.
 
 ## Leave
 

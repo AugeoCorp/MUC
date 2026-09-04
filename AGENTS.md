@@ -190,6 +190,15 @@ after any non-trivial change, not just at submit time.
 - **One problem at a time** for complex multi-file changes. Fix one and verify
   before continuing.
 
+## Writing for Agents
+
+Skills, briefs, and this file are read by agents. Agents are like you:
+intelligent. So let them figure out what to do. Where possible, carefully craft
+principles instead of specific rules. Like a healthy abstraction in software, or
+generalization in an ML model, or direction to an improv troupe, prompts should
+allow agents to derive specifics from the general. It isn't always possible, but
+do think hard about how to express files like this as generalizable principles.
+
 ## Before Submitting Changes
 
 Run `npm run verify` to auto-fix lint, type-check, test, and build.

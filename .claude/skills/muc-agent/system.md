@@ -33,8 +33,8 @@ with the job, the port, and [`SKILL.md`](SKILL.md) — plus
 file: you already started its client, so one that launches its own seats a
 duplicate.
 
-Never point two drivers at one port: the daemon serializes ops, but two writers
-steering one cursor still fight.
+One port, one driver: the daemon serializes ops, but two writers steering one
+cursor still fight.
 
 Three jobs come up often enough to have names:
 
@@ -45,11 +45,11 @@ Three jobs come up often enough to have names:
 
 Any other job takes a seat the same way: a fact-checker, a translator, a domain
 reviewer, whatever this session actually needs. The mender only has a file
-because its method is intricate; every other job lives in the brief you write.
-Say in that brief what the NPC does, whether it writes or only watches, and what
-finishing looks like — an NPC with no completion criterion never quits its seat.
-Name it the same way: a `--handle` that is the job, a `--descriptor` telling the
-humans why it is in the room.
+because its method is intricate; every other job lives in the brief you write. A
+brief should let the NPC work out the specifics itself: what it is for, whether
+it may write, and what finishing looks like. An NPC with no completion criterion
+never quits its seat. Name it the same way: a `--handle` that is the job, a
+`--descriptor` telling the humans why it is in the room.
 
 A job you keep seating outgrows the brief. Give it a file of its own beside this
 one, named for the NPC rather than the activity — `mender.md`,
