@@ -1,11 +1,16 @@
 # Send coordination: ready humans, working agents
 
-How the send should treat an agent that is mid-task. Today it doesn't: only
-humans gate the quorum, and the host submits the instant the last human is ready
-— re-checked on every text change, so a room that is all-ready while an agent
-works actually ships on the agent's very next edit. A drafter expanding a `TODO`
-the humans left for it can have half its expansion sent and the rest land in the
-emptied composer as orphan text.
+How the send should treat an agent that is mid-task. Today the rule is blunt:
+only humans gate the quorum, and an agent's edit withdraws every human's ready
+flag in the same update as the edit (ready flags live in the doc for exactly
+this). An all-ready room therefore never ships on an agent's edit; the humans
+re-approve the text as it now stands. Two edges remain. Humans can re-ready and
+send while the agent is still working, with nothing in the room saying so — a
+drafter expanding a `TODO` can have half its expansion sent and the rest land in
+the emptied composer as orphan text. And an agent that edits in a stream (a
+paced `type`, a repair in several ops) pulls the room's ✓ down on every edit, so
+the humans can't stay ready until it is done and nothing tells them how long
+that is.
 
 The invariant to preserve while fixing this: **an agent must never hold a
 human's message hostage.** A hung subagent, a crashed process, a slow model —
@@ -33,9 +38,9 @@ driving agent extend the signal over "thinking" spans between commands.
 When the human quorum passes, the host defers the submit while any agent is busy
 — up to a hard cap (a few seconds, enough to drain a queue, never enough to feel
 held). Cap expired, it sends regardless. Deadlock is impossible by construction,
-and the sharp edge above closes: a mid-sequence agent edit can no longer trigger
-the send between its own ops, because the non-empty queue is exactly what defers
-it.
+and the second edge above softens: a busy agent's stream of edits can stop
+withdrawing flags mid-sequence, because the room already knows to wait, and the
+✓s hold until the queue drains or the cap expires.
 
 The legend shows the pause (`⋯` beside the ◆) so the wait reads as the room
 being considerate, not broken.
@@ -70,8 +75,10 @@ No protocol gate. Instead:
 - The grace cap's length — long enough for a `splices` repair, short enough that
   a human never wonders if the room is stuck. Something under ten seconds;
   measure real queues first.
-- Where `busy` lives: beside `ready` in the awareness state (it changes often;
-  the static `user` object is the wrong home).
+- Where `busy` lives: in the awareness state, not the doc. `ready` moved into
+  the doc so it travels with the edit that withdraws it; `busy` is transient
+  presence with no such coupling, and awareness (which drops it when the client
+  does) is the right home.
 - Whether the host should parse claim markers out of the text for the confirm
   prompt, or rely only on explicit busy — parsing text couples the host to a
   convention; explicit busy misses an agent that forgot to signal.
