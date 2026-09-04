@@ -15,6 +15,12 @@
 import type { CollabSession } from "../collab/session.ts";
 import { clamp } from "../utilities/clamp.ts";
 
+// Every insert is stamped with its author, like the Editor's, so the
+// authorship lens (⌃t) colours an agent's text the same way as a person's.
+function stamp(session: CollabSession): { author: number } {
+	return { author: session.doc.clientID };
+}
+
 export interface ReplaceOptions {
 	/** Exact text to find (first occurrence). */
 	find: string;
@@ -41,7 +47,9 @@ export function appendLine(session: CollabSession, line: string): void {
 	const text = session.text.toString();
 	const needsLeadingNewline = text.length > 0 && !text.endsWith("\n");
 	const value = `${needsLeadingNewline ? "\n" : ""}${line}\n`;
-	session.edit(() => session.text.insert(session.text.length, value));
+	session.edit(() =>
+		session.text.insert(session.text.length, value, stamp(session)),
+	);
 }
 
 /**
@@ -65,7 +73,7 @@ export function replaceText(
 	if (index === -1) return { miss: "find" };
 	session.edit(() => {
 		session.text.delete(index, options.find.length);
-		session.text.insert(index, options.insert);
+		session.text.insert(index, options.insert, stamp(session));
 	});
 	return { index };
 }
@@ -89,7 +97,9 @@ export function applySplices(session: CollabSession, splices: Splice[]): void {
 			const at = clamp(splice.at, 0, length);
 			const remove = clamp(splice.remove, 0, length - at);
 			if (remove > 0) session.text.delete(at, remove);
-			if (splice.insert !== "") session.text.insert(at, splice.insert);
+			if (splice.insert !== "") {
+				session.text.insert(at, splice.insert, stamp(session));
+			}
 		});
 	});
 }
@@ -97,7 +107,7 @@ export function applySplices(session: CollabSession, splices: Splice[]): void {
 /** Insert at the local cursor and advance it — one keystroke's worth. */
 export function insertAtCursor(session: CollabSession, value: string): void {
 	const index = session.getLocalIndex();
-	session.edit(() => session.text.insert(index, value));
+	session.edit(() => session.text.insert(index, value, stamp(session)));
 	session.publishCursor(index + value.length);
 }
 

@@ -21,6 +21,7 @@ import {
 	relayUrlFor,
 	startCloudflareTunnel,
 } from "./net/tunnel.ts";
+import { saveSubmission } from "./sessions.ts";
 import { type LaunchChoice, Launcher } from "./ui/Launcher.tsx";
 import { ServerStatus } from "./ui/ServerStatus.tsx";
 
@@ -45,6 +46,12 @@ const descriptorArg = {
 } as const;
 
 const DEFAULT_HANDLE = "anon";
+
+// Ink quits on the first ⌃c of its own accord, before the screen underneath
+// ever sees the keystroke. Hand it over so they can ask for a second press
+// instead (see ui/useConfirmQuit.ts). The launcher keeps Ink's default —
+// quitting a prompt you haven't answered yet costs nothing.
+const CONFIRMS_QUIT = { exitOnCtrlC: false } as const;
 
 // Never published — a server holds a UserInfo the way it holds a doc, but its
 // presence is deliberately kept off the wire (see collab/session.ts).
@@ -116,6 +123,7 @@ const solo = defineCommand({
 				connect={openChannel}
 				role="solo"
 			/>,
+			CONFIRMS_QUIT,
 		);
 		return instance.waitUntilExit();
 	},
@@ -285,18 +293,36 @@ async function serveSession(): Promise<void> {
 	}
 
 	const session = createCollabSession(channel, SERVER_USER, { role: "server" });
+
+	// Whatever the room signs off on gets written down as it's sent. The log is
+	// append-only, so anything past what we've already filed is new. Ink patches
+	// the console, so a failure here prints above the frame rather than through
+	// it.
+	let filed = 0;
+	const onSubmission = (): void => {
+		const pending = session.messages.toArray().slice(filed);
+		filed += pending.length;
+		pending.forEach((content) => {
+			void saveSubmission(content, new Date()).catch((error: unknown) => {
+				console.error(
+					`Couldn't save the draft: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			});
+		});
+	};
+	session.messages.observe(onSubmission);
+
 	const instance = render(
 		<ServerStatus session={session} shareCode={tunnel.code} />,
+		CONFIRMS_QUIT,
 	);
 
-	// Nothing here reads the keyboard, so raw mode is off and ⌃c arrives as a
-	// signal rather than a keystroke. Catch it so the tunnel and relay get shut
-	// down properly instead of being orphaned.
-	const stop = (): void => instance.unmount();
-	process.once("SIGINT", stop);
+	// ServerStatus owns ⌃c: it takes two presses to confirm, and exits through
+	// Ink either way, so the cleanup below still runs and the tunnel and relay
+	// aren't left orphaned.
 	await instance.waitUntilExit();
-	process.off("SIGINT", stop);
 
+	session.messages.unobserve(onSubmission);
 	session.destroy();
 	await channel.disconnect();
 	tunnel.close();
@@ -319,6 +345,7 @@ async function joinSession(
 			role="participant"
 			shareCode={code}
 		/>,
+		CONFIRMS_QUIT,
 	);
 	await instance.waitUntilExit();
 }

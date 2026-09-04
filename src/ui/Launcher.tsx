@@ -34,16 +34,18 @@ interface LauncherProps {
 	onLaunch: (choice: LaunchChoice) => void;
 }
 
+// Joining comes first and starts selected: most people running `muc` have been
+// handed a code, and only one person per session is ever the one hosting.
 const MODES = [
-	{
-		mode: "serve",
-		label: "Host a session",
-		hint: "runs the relay — you won't be drafting",
-	},
 	{
 		mode: "connect",
 		label: "Join a session",
 		hint: "you'll need the host's code",
+	},
+	{
+		mode: "serve",
+		label: "Host a session",
+		hint: "runs the relay — you won't be drafting",
 	},
 ] as const;
 
@@ -59,9 +61,7 @@ export function Launcher({
 	const [step, setStep] = useState<Step>(
 		joining === undefined ? "mode" : "handle",
 	);
-	const [mode, setMode] = useState<Mode>(
-		joining === undefined ? "serve" : "connect",
-	);
+	const [mode, setMode] = useState<Mode>("connect");
 	const [code, setCode] = useState(joining ?? "");
 	const [handle, setHandle] = useState(defaultHandle);
 	const [problem, setProblem] = useState<string>();
