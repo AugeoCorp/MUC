@@ -171,3 +171,25 @@ describe("sync", () => {
 		expect(humanSession.text.toString()).toBe("scribe: present\n");
 	});
 });
+
+describe("applySplices", () => {
+	it("lands same-index splices in the order given", () => {
+		const [agentSession] = createAgentWithPeer();
+		setText(agentSession, "xy");
+		applySplices(agentSession, [
+			{ at: 0, remove: 0, insert: "a" },
+			{ at: 0, remove: 0, insert: "b" },
+			{ at: 2, remove: 0, insert: "z" },
+		]);
+		expect(agentSession.text.toString()).toBe("abxyz");
+	});
+
+	it("withdraws every human's flag in the same update as the edit", () => {
+		const [agentSession, humanSession] = createAgentWithPeer();
+		humanSession.setReady(true);
+		expect(agentSession.getRemoteCursors()[0]?.ready).toBe(true);
+		applySplices(agentSession, [{ at: 0, remove: 0, insert: "note" }]);
+		expect(humanSession.isReady()).toBe(false);
+		expect(humanSession.text.toString()).toBe("note");
+	});
+});

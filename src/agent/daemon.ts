@@ -19,7 +19,9 @@ import {
 	type RemoteCursor,
 	type UserInfo,
 } from "../collab/session.ts";
-import { readBody } from "../utilities/readBody.ts";
+import { listen } from "../utilities/listen.ts";
+import { parseNonNegativeInteger } from "../utilities/parseNonNegativeInteger.ts";
+import { BodyTooLargeError, readBody } from "../utilities/readBody.ts";
 import {
 	appendLine,
 	applySplices,
@@ -87,6 +89,21 @@ export function startAgentDaemon(
 		return events.filter((event) => event.seq > seq);
 	}
 
+	// A cursor older than the buffer has missed events that are gone for good;
+	// the response says so rather than answering as if nothing happened.
+	function feed(since: number): {
+		seq: number;
+		gap: boolean;
+		events: AgentEvent[];
+	} {
+		const oldestRetained = events[0]?.seq ?? nextSeq;
+		return {
+			seq: nextSeq - 1,
+			gap: since + 1 < oldestRetained,
+			events: eventsSince(since),
+		};
+	}
+
 	// Text changes: coalesce bursts (remote typing arrives keystroke-by-
 	// keystroke) into one event per window, keeping every delta.
 	let pendingEdits: Array<{
@@ -116,8 +133,9 @@ export function startAgentDaemon(
 
 	// Roster changes: only when membership or ready flags shift, not on every
 	// remote cursor twitch — cursors are always available from /state.
+	// Membership arrives through awareness, ready flags through the doc.
 	let lastRoster = "";
-	const onAwareness = (): void => {
+	const onRoster = (): void => {
 		const current = participants();
 		const roster = current
 			.map((participant) => `${participant.name}:${participant.ready}`)
@@ -128,7 +146,8 @@ export function startAgentDaemon(
 			emit("roster", { participants: current });
 		}
 	};
-	session.awareness.on("change", onAwareness);
+	session.awareness.on("change", onRoster);
+	session.readyFlags.observe(onRoster);
 
 	const onMessages = (): void => {
 		emit("message", { messages: session.messages.toArray() });
@@ -146,10 +165,7 @@ export function startAgentDaemon(
 		transaction: Y.Transaction,
 	): EditAttribution | undefined {
 		if (origin === "local") {
-			return {
-				name: session.user.name,
-				kind: session.user.kind ?? "human",
-			};
+			return { name: session.user.name, kind: session.user.kind };
 		}
 		const writerIds: number[] = [];
 		transaction.afterState.forEach((clock, clientId) => {
@@ -162,17 +178,15 @@ export function startAgentDaemon(
 			| { user?: UserInfo }
 			| undefined;
 		if (state?.user === undefined) return undefined;
-		return {
-			name: state.user.name,
-			kind: state.user.kind ?? "human",
-		};
+		// Straight off the wire, so an older client may have sent no kind.
+		return { name: state.user.name, kind: state.user.kind ?? "human" };
 	}
 
 	function participants() {
 		return session.getRemoteCursors().map((cursor: RemoteCursor) => ({
 			name: cursor.user.name,
 			color: cursor.user.color,
-			kind: cursor.user.kind ?? "human",
+			kind: cursor.user.kind,
 			descriptor: cursor.user.descriptor,
 			index: cursor.index,
 			ready: cursor.ready,
@@ -229,9 +243,9 @@ export function startAgentDaemon(
 			const wellFormed = command.splices.every((splice) => {
 				const candidate = splice as Partial<Splice> | undefined;
 				return (
-					typeof candidate?.at === "number" &&
-					typeof candidate.remove === "number" &&
-					typeof candidate.insert === "string"
+					Number.isInteger(candidate?.at) &&
+					Number.isInteger(candidate?.remove) &&
+					typeof candidate?.insert === "string"
 				);
 			});
 			if (!wellFormed) {
@@ -255,16 +269,16 @@ export function startAgentDaemon(
 			insertAtCursor(session, command.text);
 			return { ok: true, text: session.text.toString() };
 		}
-		if (op === "moveTo" && typeof command.index === "number") {
-			moveCursor(session, command.index);
+		if (op === "moveTo" && Number.isInteger(command.index)) {
+			moveCursor(session, command.index as number);
 			return { ok: true, myIndex: session.getLocalIndex() };
 		}
 		if (
 			op === "deleteRange" &&
-			typeof command.index === "number" &&
-			typeof command.count === "number"
+			Number.isInteger(command.index) &&
+			Number.isInteger(command.count)
 		) {
-			deleteRange(session, command.index, command.count);
+			deleteRange(session, command.index as number, command.count as number);
 			return { ok: true, text: session.text.toString() };
 		}
 		if (op === "ready" && typeof command.ready === "boolean") {
@@ -291,60 +305,69 @@ export function startAgentDaemon(
 			return;
 		}
 		if (request.method === "GET" && url.pathname === "/events") {
-			const since = Number(url.searchParams.get("since") ?? 0);
+			const since = parseNonNegativeInteger(url.searchParams.get("since"));
 			const wait = Math.min(
-				Number(url.searchParams.get("wait") ?? 0),
+				parseNonNegativeInteger(url.searchParams.get("wait")),
 				LONG_POLL_LIMIT_MS,
 			);
-			const ready = eventsSince(since);
-			if (ready.length > 0 || wait <= 0) {
-				respond(200, { seq: nextSeq - 1, events: ready });
+			const pending = feed(since);
+			if (pending.events.length > 0 || pending.gap || wait === 0) {
+				respond(200, pending);
 				return;
 			}
 			// Long-poll: answer on the next event or when the wait expires.
 			const timer = setTimeout(() => {
 				waiters.delete(wake);
-				respond(200, { seq: nextSeq - 1, events: [] });
+				respond(200, feed(since));
 			}, wait);
 			const wake = (): void => {
 				clearTimeout(timer);
-				respond(200, { seq: nextSeq - 1, events: eventsSince(since) });
+				respond(200, feed(since));
 			};
 			waiters.add(wake);
 			return;
 		}
 		if (request.method === "POST" && url.pathname === "/cmd") {
+			// Only a JSON content type is accepted. A browser sends any other
+			// POST without a preflight, so a web page could otherwise drive this
+			// port from anywhere; JSON forces the preflight, and with no CORS
+			// headers on offer it fails there.
+			const contentType = request.headers["content-type"] ?? "";
+			if (!/^application\/json\b/i.test(contentType)) {
+				respond(415, {
+					ok: false,
+					error: "content-type must be application/json",
+				});
+				return;
+			}
 			void readBody(request)
 				.then((body) => JSON.parse(body) as Record<string, unknown>)
 				.then((command) => enqueue(() => handleCommand(command)))
 				.then((result) => respond(200, result))
-				.catch((error) => respond(400, { ok: false, error: String(error) }));
+				.catch((error) =>
+					respond(error instanceof BodyTooLargeError ? 413 : 400, {
+						ok: false,
+						error: String(error),
+					}),
+				);
 			return;
 		}
 		respond(404, { ok: false, error: "not found" });
 	});
 
-	return new Promise((resolve, reject) => {
-		// Without a listener, a listen failure (the port is taken, or
-		// privileged) becomes an uncaught exception instead of a rejection the
-		// caller can present.
-		server.on("error", reject);
-		server.listen(options.port ?? 0, "127.0.0.1", () => {
-			const address = server.address();
-			const port =
-				typeof address === "object" && address !== null ? address.port : 0;
-			resolve({
-				port,
-				close() {
-					session.text.unobserve(onText);
-					session.awareness.off("change", onAwareness);
-					session.messages.unobserve(onMessages);
-					if (textTimer !== undefined) clearTimeout(textTimer);
-					waiters.forEach((wake) => wake());
-					waiters.clear();
-					return new Promise((done) => server.close(() => done()));
-				},
-			});
-		});
-	});
+	return listen(server, options.port ?? 0, "127.0.0.1").then(
+		({ port, close }) => ({
+			port,
+			close() {
+				session.text.unobserve(onText);
+				session.awareness.off("change", onRoster);
+				session.readyFlags.unobserve(onRoster);
+				session.messages.unobserve(onMessages);
+				if (textTimer !== undefined) clearTimeout(textTimer);
+				waiters.forEach((wake) => wake());
+				waiters.clear();
+				return close();
+			},
+		}),
+	);
 }

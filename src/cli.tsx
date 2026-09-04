@@ -48,7 +48,7 @@ const DEFAULT_HANDLE = "anon";
 
 // Never published — a server holds a UserInfo the way it holds a doc, but its
 // presence is deliberately kept off the wire (see collab/session.ts).
-const SERVER_USER: UserInfo = { name: "muc", color: "gray" };
+const SERVER_USER: UserInfo = { name: "muc", color: "gray", kind: "human" };
 
 // `muc serve` — run the session, don't join it: a local relay, a public
 // Cloudflare tunnel, and a headless document that does the sending. It takes no
@@ -77,14 +77,8 @@ const connect = defineCommand({
 		descriptor: descriptorArg,
 	},
 	async run({ args }) {
-		const code = args.code ?? "";
-		if (!isSessionCode(code)) {
-			console.error(
-				`"${code}" doesn't look like a session code. Expected a single word like wide-blue-cat-42 — if the host sent you a link, the code is the part before the first dot.`,
-			);
-			process.exitCode = 1;
-			return;
-		}
+		const code = requireSessionCode(args.code);
+		if (code === undefined) return;
 
 		const kind = parseKind(args.kind);
 		if (kind === undefined) {
@@ -151,14 +145,8 @@ const agent = defineCommand({
 		},
 	},
 	async run({ args }) {
-		const code = args.code ?? "";
-		if (!isSessionCode(code)) {
-			console.error(
-				`"${code}" doesn't look like a session code. Expected a single word like wide-blue-cat-42.`,
-			);
-			process.exitCode = 1;
-			return;
-		}
+		const code = requireSessionCode(args.code);
+		if (code === undefined) return;
 
 		// Headless means no prompt to fall back on — take the default silently.
 		const handle = args.handle ?? DEFAULT_HANDLE;
@@ -209,16 +197,14 @@ const agent = defineCommand({
 	},
 });
 
-// destroy() drops our presence with a final frame; the poll loop needs a beat
-// to flush it before disconnecting, or we ghost in the room until awareness
-// ages us out.
+// destroy() drops our presence with a final frame; disconnecting waits for
+// that frame to be posted, or we ghost in the room until awareness ages us out.
 async function leaveSession(
 	session: CollabSession,
 	channel: Channel,
 ): Promise<void> {
 	session.destroy();
-	await new Promise((resolve) => setTimeout(resolve, 300));
-	channel.disconnect();
+	await channel.disconnect();
 }
 
 // `muc start` — the bare `muc` path: ask which mode, and for whatever that mode
@@ -312,7 +298,7 @@ async function serveSession(): Promise<void> {
 	process.off("SIGINT", stop);
 
 	session.destroy();
-	channel.disconnect();
+	await channel.disconnect();
 	tunnel.close();
 	await relay.close();
 }
@@ -378,13 +364,32 @@ function isInteractive(): boolean {
 }
 
 // The color is only ever a starting guess: the server reassigns as people
-// arrive, so that no two participants share one (see collab/session.ts).
+// arrive, so that no two participants share one (see collab/session.ts). This
+// is the one place a kind is defaulted — past here, everyone has one.
 function userFrom(details: {
 	name: string;
 	kind?: ParticipantKind;
 	descriptor?: string;
 }): UserInfo {
-	return { ...details, color: colorFromName(details.name) };
+	return {
+		...details,
+		kind: details.kind ?? "human",
+		color: colorFromName(details.name),
+	};
+}
+
+/**
+ * The session code a command was given, or undefined — with the complaint
+ * already printed and the exit code set — when it wasn't one.
+ */
+function requireSessionCode(value: string | undefined): string | undefined {
+	const code = value ?? "";
+	if (isSessionCode(code)) return code;
+	console.error(
+		`"${code}" doesn't look like a session code. Expected a single word like wide-blue-cat-42 — if the host sent you a link, the code is the part before the first dot.`,
+	);
+	process.exitCode = 1;
+	return undefined;
 }
 
 // citty hands us whatever string was typed, so narrow it before it travels.

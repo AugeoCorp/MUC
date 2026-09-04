@@ -19,8 +19,9 @@ What shapes the work:
   typed which character. It cannot be rebuilt later, because compacted backlog
   merges writers.
 - **Repair settled text.** A span still changing is not soup yet, and racing
-  live typists makes more of it. A repair sent while every human is ready lands
-  after the send, as stray text in the emptied composer.
+  live typists makes more of it. A repair while every human is ready pulls their
+  sign-off, and the send with it; a repair a moment later lands as stray text in
+  the emptied composer.
 - **Repair once, whole.** One anchored `replace` (or one `splices` batch) per
   braid, then re-read `/state` to confirm it landed. A human who edits your
   repair afterward has overruled you.

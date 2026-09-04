@@ -66,6 +66,8 @@ Full snapshot, always current — no cursor to manage.
   free-form note (may be absent); `index` is their cursor (may be absent if
   momentarily unresolvable); `ready` is their flag. The serving host publishes
   no presence and never appears here.
+- Ready flags are part of the shared document, not of presence: a flag and the
+  text it was set against always arrive together.
 - `messages` — the shared log of sent messages, oldest first.
 
 ## GET /events?since=N&wait=MS
@@ -76,9 +78,11 @@ Sequenced event feed with a cursor and optional long-poll.
 - `wait` — if nothing is pending, hold the request up to `MS` milliseconds
   (capped at 30000) and answer as soon as an event lands.
 
-Response: `{ "seq": <latest seq issued>, "events": [...] }`. Pass the returned
-`seq` as the next `since`. The buffer keeps the last 500 events; if your cursor
-falls further behind, older events are silently gone — resync from `/state`.
+Response: `{ "seq": <latest seq issued>, "gap": <boolean>, "events": [...] }`.
+Pass the returned `seq` as the next `since`. The buffer keeps the last 500
+events; `gap: true` means your cursor fell further behind than that and events
+between it and the oldest retained one are gone — resync from `/state`. A
+malformed `since` or `wait` counts as `0`.
 
 Every event carries `seq`, `ts` (ISO timestamp), and `type`:
 
@@ -115,16 +119,19 @@ presence-less host clearing the composer after a send.
 
 ## POST /cmd
 
-Body: `{"op": "...", ...params}`. Response is always JSON: `{"ok": true, ...}`
-or `{"ok": false, "error": "..."}` (HTTP 200 either way; malformed JSON is 400).
-Ops are **serialized** through a queue — a slow `type` cannot interleave with a
-concurrent `replace` from another caller.
+Body: `{"op": "...", ...params}`, sent with `content-type: application/json` —
+any other content type is refused with 415, which is what keeps a web page from
+driving this port through a no-preflight `fetch`. Response is always JSON:
+`{"ok": true, ...}` or `{"ok": false, "error": "..."}` (HTTP 200 either way;
+malformed JSON is 400, a body over 1 MiB is 413). Ops are **serialized** through
+a queue — a slow `type` cannot interleave with a concurrent `replace` from
+another caller. Every index and count must be an integer.
 
 | op            | params                                         | returns             | notes                                                                                                                                                                                                                             |
 | ------------- | ---------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `appendLine`  | `line: string`                                 | `{ok, text}`        | Appends `line` as its own line at the end, in one atomic transaction. **The collision-safe way to speak.**                                                                                                                        |
 | `replace`     | `find: string, insert: string, after?: string` | `{ok, index, text}` | Atomic find-and-replace of the first occurrence (searching after the `after` anchor if given). **Never moves your cursor.** Miss → `{ok: false, error: "find: no match"}` (`"after: no match"` when the anchor is what's absent). |
-| `splices`     | `splices: [{at, remove, insert}]`              | `{ok, text}`        | Several edits in one transaction. Indices refer to the document _before_ the batch; applied highest-index first. Overlaps are your mistake.                                                                                       |
+| `splices`     | `splices: [{at, remove, insert}]`              | `{ok, text}`        | Several edits in one transaction. Indices refer to the document _before_ the batch; applied highest-index first, and same-index splices land in the order given. Overlaps are your mistake.                                       |
 | `type`        | `text: string, cps?: number`                   | `{ok, text}`        | Human-paced typing at the live cursor (default 14 chars/sec, clamped 1–100). Interleaves with concurrent typing at the same spot — prefer `appendLine` unless visible typing is the point.                                        |
 | `insert`      | `text: string`                                 | `{ok, text}`        | Insert at the cursor in one transaction; cursor advances past it.                                                                                                                                                                 |
 | `moveTo`      | `index: number`                                | `{ok, myIndex}`     | Publish the cursor at a clamped index.                                                                                                                                                                                            |
@@ -137,9 +144,11 @@ An unknown `op` — or a known one with missing / mistyped params — returns
 
 ## Semantics that matter
 
-- **Every edit clears your ready flag** (`appendLine`, `replace`, `splices`,
-  `type`, `insert`, `deleteRange`). Re-send `ready` after your last edit if you
-  mean it.
+- **Every edit withdraws every ready flag in the room** (`appendLine`,
+  `replace`, `splices`, `type`, `insert`, `deleteRange`): yours, and each
+  human's, in the same update as the edit. An agent can't sign off for anyone,
+  so the humans decide again over the text as it now stands. Re-send `ready`
+  after your last edit if you mean it.
 - **Agents never gate the send.** Only humans count toward "everyone ready";
   your `ready` flag is cosmetic. When every present human is ready, the host
   submits: the draft lands in `messages` and the composer empties (you'll see a

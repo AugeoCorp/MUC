@@ -49,15 +49,20 @@ peer-to-peer.
 - The shared state lives in `src/collab/session.ts`: local edits and cursors are
   encoded as base64 frames and ridden over the channel, and inbound frames are
   applied to the Yjs doc. Because the relay replays its retained log to a late
-  joiner, the document reconstructs automatically.
-- The relay **compacts** that log so it never grows without bound: accumulated
-  document frames are periodically merged into one via `Y.mergeUpdates` (merged
-  replay ≡ original replay, since Yjs updates are idempotent and commutative),
-  awareness frames older than ~90 seconds age out (live clients re-announce
-  every ~15 seconds; departed ones stop replaying as ghosts), and frames the
-  relay can't parse are kept forever untouched. Client cursors are sequence
-  numbers, so they survive compaction — a cursor inside a merged run just
-  receives the whole merged frame, which is redundant but harmless for Yjs.
+  joiner, the document reconstructs automatically. **Ready flags live in the
+  doc**, not in awareness: `session.edit` withdraws the flags an edit
+  invalidates in the same transaction as the edit, so no one can ever see a flag
+  beside text it wasn't set against, and only a flag change can trigger the
+  send. A channel posts frames one at a time, in order, for the same reason.
+- The relay **compacts** that log so it never grows without bound: runs of
+  consecutive document frames are periodically merged into one via
+  `Y.mergeUpdates` (merged replay ≡ original replay, since Yjs updates are
+  idempotent and commutative; only consecutive frames merge, so replay order is
+  arrival order), awareness frames older than ~90 seconds age out (live clients
+  re-announce every ~15 seconds; departed ones stop replaying as ghosts), and
+  frames the relay can't parse are kept forever untouched. Client cursors are
+  sequence numbers, so they survive compaction — a cursor inside a merged run
+  just receives the whole merged frame, which is redundant but harmless for Yjs.
 - The UI (`src/ui/Editor.tsx`) treats Yjs as the single source of truth — React
   never stores the text, it re-renders from the doc.
 - **AI agents can sit at the box too**: `muc agent <code>` (`src/agent/`) joins
@@ -119,9 +124,7 @@ src/
 │   ├── channel.ts          # Channel interface + tunnel / local implementations
 │   ├── relay.ts            # local HTTP message-log server (the host runs this)
 │   └── tunnel.ts           # spawns `cloudflared`; session code ↔ relay URL
-└── utilities/
-    ├── assertValue.ts
-    └── assertValue.test.ts
+└── utilities/             # small shared helpers: clamp, listen, readBody (bounded), …
 
 dist/                      # gitignored — tsdown output (the published bin)
 ```
@@ -140,6 +143,11 @@ dist/                      # gitignored — tsdown output (the published bin)
 
 `npm run verify` is the canonical "before commit / before handoff" check. Run it
 after any non-trivial change, not just at submit time.
+
+`prepare` also runs `tsdown`, so that `npm install git+https://…` of this repo
+yields a working `muc` bin (the portable skill's pre-publish fallback). It needs
+the devDependencies, so an `npm install --omit=dev` _of this repo itself_ fails;
+that trade is deliberate.
 
 ## Formatting
 
