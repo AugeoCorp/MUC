@@ -184,12 +184,13 @@ describe("applySplices", () => {
 		expect(agentSession.text.toString()).toBe("abxyz");
 	});
 
-	it("withdraws every human's flag in the same update as the edit", () => {
+	it("withdraws only the agent's own flag, never a human's", () => {
 		const [agentSession, humanSession] = createAgentWithPeer();
 		humanSession.setReady(true);
-		expect(agentSession.getRemoteCursors()[0]?.ready).toBe(true);
+		agentSession.setReady(true);
 		applySplices(agentSession, [{ at: 0, remove: 0, insert: "note" }]);
-		expect(humanSession.isReady()).toBe(false);
+		expect(agentSession.isReady()).toBe(false);
+		expect(humanSession.isReady()).toBe(true);
 		expect(humanSession.text.toString()).toBe("note");
 	});
 });

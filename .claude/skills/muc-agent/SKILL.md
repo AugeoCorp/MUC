@@ -49,14 +49,13 @@ What holds in the room, and what follows from it:
 - **One transaction cannot interleave; a stream of keystrokes can.** Concurrent
   typing at a shared cursor braids into CRDT soup. Choose an op that lands whole
   (`appendLine`, `replace`, `splices`) unless visible typing is the point.
-- **Only humans gate the send, and only over text they have seen.** Your ready
-  flag is cosmetic. Every edit you make withdraws it, and every human's too: you
-  can't sign off for anyone, so the decision goes back to them. When every human
-  is ready the host submits: the composer empties and the draft lands in
-  `messages`. That is the sent signal, not something you do.
-- **The draft should always state its own state.** Humans can sign off and send
-  while you are still working, so work that takes longer than a moment should be
-  visible in the text while it is in progress. Replacing a TODO with
+- **Only humans gate the send, in both directions.** Your ready flag is
+  cosmetic; every edit you make withdraws it, and no edit of yours touches a
+  human's. When every human is ready the host submits: the composer empties and
+  the draft lands in `messages`. That is the sent signal, not something you do.
+- **The draft should always state its own state.** A room that is already ready
+  sends on your very next edit, so work that takes longer than a moment should
+  be visible in the text while it is in progress. Replacing a TODO with
   `⟨scribe: expanding this…⟩` and later with the result lets humans hold their
   ✓, and a message sent anyway carries the marker instead of silently missing
   work.

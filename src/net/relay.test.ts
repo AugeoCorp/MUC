@@ -208,10 +208,8 @@ describe("startRelay", () => {
 		const response = await fetch(`http://127.0.0.1:${relay.port}/send`, {
 			method: "POST",
 			body: "x".repeat(BODY_LIMIT_BYTES + 1),
-		}).catch(() => undefined);
-		// The relay tears the socket down mid-body; fetch may see the 413 or
-		// a reset, and either is a refusal.
-		if (response !== undefined) expect(response.status).toBe(413);
+		});
+		expect(response.status).toBe(413);
 
 		await send("alive");
 		const replay = await fetchMessages(0);

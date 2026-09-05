@@ -109,7 +109,8 @@ export function startRelay(): Promise<Relay> {
 				if (!response.headersSent) {
 					response.writeHead(error instanceof BodyTooLargeError ? 413 : 400);
 				}
-				response.end();
+				// The status has to leave before the socket does.
+				response.end(() => request.destroy());
 			});
 			return;
 		}

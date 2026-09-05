@@ -254,7 +254,7 @@ describe("server submit", () => {
 		expect(serverSession.text.toString()).toBe("h");
 	});
 
-	it("hands the decision back when an agent edits a ready room", () => {
+	it("sends when an agent supplies the draft to a room already ready", () => {
 		const [serverChannel, humanChannel, agentChannel] = createHub(3);
 		const serverSession = track(
 			createCollabSession(serverChannel, serverUser, { role: "server" }),
@@ -266,26 +266,28 @@ describe("server submit", () => {
 			createCollabSession(agentChannel, agent("scribe")),
 		);
 		// Ready before there's anything to send — an agent then supplies the
-		// draft. It can't sign off for anyone, so the human's flag drops with
-		// the edit rather than the draft going out unread.
+		// draft. Its edit touches no one's flag, so the room is still ready and
+		// the draft goes out on the text change.
 		humanSession.setReady(true);
-		agentSession.edit(() => agentSession.text.insert(0, "go"));
 		expect(serverSession.messages.toArray()).toEqual([]);
-		expect(humanSession.isReady()).toBe(false);
-		expect(serverSession.getRemoteCursors()).toEqual([
-			expect.objectContaining({
-				user: expect.objectContaining({ name: "kirby" }),
-				ready: false,
-			}),
-			expect.objectContaining({
-				user: expect.objectContaining({ name: "scribe" }),
-				ready: false,
-			}),
-		]);
-		// The human reads it and signs off; now it sends.
-		humanSession.setReady(true);
+		agentSession.edit(() => agentSession.text.insert(0, "go"));
 		expect(serverSession.messages.toArray()).toEqual(["go"]);
 		expect(humanSession.messages.toArray()).toEqual(["go"]);
+	});
+
+	it("leaves a human's flag alone when an agent edits", () => {
+		const [humanChannel, agentChannel] = createHub(2);
+		const humanSession = track(
+			createCollabSession(humanChannel, human("kirby")),
+		);
+		const agentSession = track(
+			createCollabSession(agentChannel, agent("scribe")),
+		);
+		setText(humanSession, "draft");
+		humanSession.setReady(true);
+		agentSession.edit(() => agentSession.text.insert(0, "note: "));
+		expect(humanSession.isReady()).toBe(true);
+		expect(agentSession.getRemoteCursors()[0]?.ready).toBe(true);
 	});
 
 	it("drops a departed participant's flag so it can't hold the room ready", () => {

@@ -144,15 +144,14 @@ An unknown `op` — or a known one with missing / mistyped params — returns
 
 ## Semantics that matter
 
-- **Every edit withdraws every ready flag in the room** (`appendLine`,
-  `replace`, `splices`, `type`, `insert`, `deleteRange`): yours, and each
-  human's, in the same update as the edit. An agent can't sign off for anyone,
-  so the humans decide again over the text as it now stands. Re-send `ready`
-  after your last edit if you mean it.
+- **Every edit clears your ready flag** (`appendLine`, `replace`, `splices`,
+  `type`, `insert`, `deleteRange`), in the same update as the edit. It touches
+  no human's flag. Re-send `ready` after your last edit if you mean it.
 - **Agents never gate the send.** Only humans count toward "everyone ready";
   your `ready` flag is cosmetic. When every present human is ready, the host
   submits: the draft lands in `messages` and the composer empties (you'll see a
-  `text` event clearing the draft and a `message` event).
+  `text` event clearing the draft and a `message` event). A room that is already
+  ready sends on your next edit — keep unfinished work visible in the text.
 - **The serving host is invisible** — it publishes no presence, so it never
   appears in `participants` and its composer-clearing edits carry no `by`.
 - **Prefer `appendLine` over `type`.** Paced per-character typing at a shared

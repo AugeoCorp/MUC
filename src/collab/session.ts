@@ -117,10 +117,9 @@ export interface CollabSession {
 	localColor(): string;
 	/**
 	 * Apply a local edit. `mutate` runs in one transaction together with the
-	 * ready flags it withdraws — the local user's, since the draft they signed
-	 * off on no longer exists; and, when the local user is an agent, every
-	 * human's, because an agent can't sign off for anyone and so hands the
-	 * decision back to the people who can.
+	 * withdrawal of the local user's own ready flag — the draft they signed off
+	 * on no longer exists. No one else's flag is touched: a human's ✓ is theirs
+	 * alone, and an agent's edit neither adds to nor removes it.
 	 */
 	edit(mutate: () => void): void;
 	/** A participant's color, or undefined if we've never heard of them. */
@@ -183,11 +182,7 @@ export function createCollabSession(
 	function edit(mutate: () => void): void {
 		doc.transact(() => {
 			mutate();
-			if (isHuman(user)) {
-				if (readyFlags.get(localKey) === true) readyFlags.delete(localKey);
-			} else {
-				readyFlags.forEach((_, key) => readyFlags.delete(key));
-			}
+			if (readyFlags.get(localKey) === true) readyFlags.delete(localKey);
 		}, LOCAL_ORIGIN);
 	}
 
@@ -406,16 +401,19 @@ export function createCollabSession(
 		}, LOCAL_ORIGIN);
 	}
 
-	// Only a ready flag can complete the quorum, so only a flag change is worth
-	// re-checking on. Text changes never send: an edit travels with the flags it
-	// withdraws, so a draft is only ever sent against the flags set for it.
-	const onReadyChanged = (): void => submitIfEveryoneReady();
+	// Re-check on flags and on text. A human's edit can never send on its own:
+	// it travels with the withdrawal of their flag, so the room is not ready
+	// when it lands. An agent's edit into a room that is already ready does
+	// send — agents never gate the send, in either direction — which is why
+	// the skill tells them to keep unfinished work visible in the text.
+	const onRoomChanged = (): void => submitIfEveryoneReady();
 	// Whenever a message lands — from our own submit or a peer's — every client
 	// also clears its own flag, covering the one race the submit's own clear
 	// can't: a flag set in the same instant the draft went out.
 	const onMessageAdded = (): void => setReady(false);
 	awareness.on("change", reconcilePresence);
-	readyFlags.observe(onReadyChanged);
+	readyFlags.observe(onRoomChanged);
+	text.observe(onRoomChanged);
 	messages.observe(onMessageAdded);
 
 	return {
@@ -440,7 +438,8 @@ export function createCollabSession(
 		isEveryoneReady,
 		destroy() {
 			awareness.off("change", reconcilePresence);
-			readyFlags.unobserve(onReadyChanged);
+			readyFlags.unobserve(onRoomChanged);
+			text.unobserve(onRoomChanged);
 			messages.unobserve(onMessageAdded);
 			unsubscribe();
 			undoManager.destroy();
