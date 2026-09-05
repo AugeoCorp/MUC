@@ -141,12 +141,17 @@ function sleep(milliseconds: number): Promise<void> {
  * remote participants watch the text arrive. Interleaves with concurrent
  * typing at the same position — prefer `appendLine` unless visible typing is
  * the point. Callers should serialize this behind the daemon's operation queue.
+ *
+ * Returns false, having typed nothing, when every human is already ready: a
+ * ready room sends on the next edit, and the next edit here would be the
+ * first character alone. `appendLine` lands whole and is the op for that room.
  */
 export async function typeText(
 	session: CollabSession,
 	value: string,
 	charactersPerSecond = DEFAULT_CHARACTERS_PER_SECOND,
-): Promise<void> {
+): Promise<boolean> {
+	if (session.isEveryoneReady()) return false;
 	// NaN slips through clamp (every comparison is false), and a NaN delay
 	// types at event-loop speed — the opposite of pacing. Fall back instead.
 	const pace = Number.isFinite(charactersPerSecond)
@@ -157,4 +162,5 @@ export async function typeText(
 		insertAtCursor(session, character);
 		await sleep(delay);
 	}
+	return true;
 }

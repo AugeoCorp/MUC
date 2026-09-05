@@ -47,8 +47,10 @@ What holds in the room, and what follows from it:
   end, a correction in place. `replace` with an `after` anchor reaches any spot;
   `appendLine` only reaches the end.
 - **One transaction cannot interleave; a stream of keystrokes can.** Concurrent
-  typing at a shared cursor braids into CRDT soup. Choose an op that lands whole
-  (`appendLine`, `replace`, `splices`) unless visible typing is the point.
+  typing at a shared cursor braids into CRDT soup, and a ready room would send
+  on the first keystroke of the stream (`type` refuses that room). Choose an op
+  that lands whole (`appendLine`, `replace`, `splices`) unless visible typing is
+  the point.
 - **Only humans gate the send, in both directions.** Your ready flag is
   cosmetic; every edit you make withdraws it, and no edit of yours touches a
   human's. When every human is ready the host submits: the composer empties and

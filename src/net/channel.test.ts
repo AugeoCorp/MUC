@@ -2,10 +2,13 @@ import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { listen } from "../utilities/listen.ts";
 import { readBody } from "../utilities/readBody.ts";
-import { createTunnelChannel } from "./channel.ts";
+import { createTunnelChannel, FrameRefusedError } from "./channel.ts";
 
 // A stand-in relay that refuses the first POST and records every one it sees.
-async function createFlakyRelay(refuseFirst: number): Promise<{
+async function createFlakyRelay(
+	refuseFirst: number,
+	refusalStatus = 500,
+): Promise<{
 	url: string;
 	received: string[];
 	close(): Promise<void>;
@@ -17,7 +20,7 @@ async function createFlakyRelay(refuseFirst: number): Promise<{
 			void readBody(request).then((body) => {
 				posts += 1;
 				if (posts <= refuseFirst) {
-					response.writeHead(500).end();
+					response.writeHead(refusalStatus).end();
 					return;
 				}
 				received.push(body);
@@ -52,6 +55,18 @@ describe("tunnel channel", () => {
 			JSON.stringify({ t: "u", d: "first" }),
 			JSON.stringify({ t: "a", d: "second" }),
 		]);
+	});
+
+	it("gives up on a 4xx at once, tells the poster, and carries on", async () => {
+		const relay = await createFlakyRelay(1, 413);
+		cleanups.push(relay.close);
+		const channel = await createTunnelChannel(relay.url);
+		const refused = channel.post({ t: "u", d: "too big" });
+		const next = channel.post({ t: "a", d: "fine" });
+		await expect(refused).rejects.toBeInstanceOf(FrameRefusedError);
+		await next;
+		await channel.disconnect();
+		expect(relay.received).toEqual([JSON.stringify({ t: "a", d: "fine" })]);
 	});
 
 	it("stops retrying once disconnected, after one last attempt each", async () => {

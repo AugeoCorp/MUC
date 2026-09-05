@@ -4,9 +4,12 @@ import {
 	createCollabSession,
 	type UserInfo,
 } from "../collab/session.ts";
-import { createChannelPair } from "../net/channel.ts";
-import { BODY_LIMIT_BYTES } from "../utilities/readBody.ts";
-import { type AgentDaemon, startAgentDaemon } from "./daemon.ts";
+import { type Channel, createChannelPair } from "../net/channel.ts";
+import {
+	type AgentDaemon,
+	COMMAND_LIMIT_BYTES,
+	startAgentDaemon,
+} from "./daemon.ts";
 
 const agentUser: UserInfo = { name: "scribe", color: "green", kind: "agent" };
 const humanUser: UserInfo = { name: "kirby", color: "cyan", kind: "human" };
@@ -245,11 +248,44 @@ describe("agent daemon", () => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
 				op: "appendLine",
-				line: "x".repeat(BODY_LIMIT_BYTES),
+				line: "x".repeat(COMMAND_LIMIT_BYTES),
 			}),
 		});
 		expect(response.status).toBe(413);
 		expect(((await response.json()) as { ok: boolean }).ok).toBe(false);
+		expect(fixture.agentSession.text.toString()).toBe("");
+	});
+
+	it("answers an error, not ok, when the relay refuses the edit's frame", async () => {
+		const refusing: Channel = {
+			post: () => Promise.reject(new Error("relay refused the frame (413)")),
+			subscribe: () => () => undefined,
+			disconnect: () => Promise.resolve(),
+		};
+		const agentSession = createCollabSession(refusing, agentUser);
+		const daemon = await startAgentDaemon(agentSession);
+		fixtures.push({
+			daemon,
+			agentSession,
+			humanSession: agentSession,
+			base: `http://127.0.0.1:${daemon.port}`,
+		});
+		const response = await fetch(`http://127.0.0.1:${daemon.port}/cmd`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ op: "appendLine", line: "lost" }),
+		});
+		const result = (await response.json()) as { ok: boolean; error: string };
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain("not delivered");
+	});
+
+	it("refuses type into a ready room and points at appendLine", async () => {
+		const fixture = await createFixture();
+		fixture.humanSession.setReady(true);
+		const result = await command(fixture, { op: "type", text: "hello" });
+		expect(result.ok).toBe(false);
+		expect(String(result.error)).toContain("appendLine");
 		expect(fixture.agentSession.text.toString()).toBe("");
 	});
 

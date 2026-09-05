@@ -9,7 +9,9 @@
 export interface Channel {
 	/**
 	 * Broadcast a frame to every other participant. Frames leave in the order
-	 * they were posted; the promise settles once this one has been handed off.
+	 * they were posted; the promise resolves once this one has landed, and
+	 * rejects with `FrameRefusedError` if the relay refused it outright — that
+	 * frame is gone, and the caller is the one who can say so.
 	 */
 	post(frame: unknown): Promise<void>;
 	/** Register a listener for inbound frames; returns an unsubscribe. */
@@ -32,6 +34,14 @@ const POST_TIMEOUT = 10_000;
 // pending until the gap fills, so the room quietly forks.
 const RETRY_DELAY = 500;
 const RETRY_DELAY_CAP = 8_000;
+
+/** The relay answered 4xx: it has made up its mind, and retrying would only wedge every frame behind this one. */
+export class FrameRefusedError extends Error {
+	constructor(readonly status: number) {
+		super(`relay refused the frame (${status})`);
+		this.name = "FrameRefusedError";
+	}
+}
 
 interface MessagesResponse {
 	cursor: number;
@@ -86,7 +96,8 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 	let cancelBackoff: (() => void) | undefined;
 
 	// Every frame gets at least one attempt, even after disconnect — the
-	// departure frame is posted on the way out and must still leave.
+	// departure frame is posted on the way out and must still leave. Only a
+	// network failure or a 5xx is worth another try.
 	async function deliver(body: string): Promise<void> {
 		let attempt = 0;
 		while (true) {
@@ -97,8 +108,12 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 					signal: AbortSignal.timeout(POST_TIMEOUT),
 				});
 				if (response.ok) return;
-			} catch {
-				// Timed out or unreachable — same treatment as a refusal below.
+				if (response.status >= 400 && response.status < 500) {
+					throw new FrameRefusedError(response.status);
+				}
+			} catch (error) {
+				if (error instanceof FrameRefusedError) throw error;
+				// Timed out or unreachable — same treatment as a 5xx.
 			}
 			if (disconnected) return;
 			const delay = Math.min(RETRY_DELAY * 2 ** attempt, RETRY_DELAY_CAP);
@@ -117,8 +132,10 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 	return {
 		post(frame) {
 			const body = JSON.stringify(frame);
-			outbound = outbound.then(() => deliver(body));
-			return outbound;
+			const delivery = outbound.then(() => deliver(body));
+			// A refusal is the poster's to hear about; the queue itself moves on.
+			outbound = delivery.catch(() => undefined);
+			return delivery;
 		},
 		subscribe(listener) {
 			listeners.add(listener);
