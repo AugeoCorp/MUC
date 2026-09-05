@@ -62,6 +62,14 @@ const EVENT_BUFFER_LIMIT = 500;
 const TEXT_COALESCE_MS = 300;
 const LONG_POLL_LIMIT_MS = 30_000;
 
+/**
+ * The most a command body may carry: comfortably under the relay's limit,
+ * because the text in a command comes out the other side as a Yjs update
+ * wrapped in base64 and JSON, about four thirds the size. A command this
+ * daemon accepts must be one the relay will carry.
+ */
+export const COMMAND_LIMIT_BYTES = 700 * 1024;
+
 export function startAgentDaemon(
 	session: CollabSession,
 	options: AgentDaemonOptions = {},
@@ -213,7 +221,26 @@ export function startAgentDaemon(
 		return next;
 	}
 
+	// `ok` means the edit landed at the relay, not just in the local doc: the
+	// one frame the relay refuses is a frame the peers never see, and an agent
+	// told "ok" would carry on writing into a room that has stopped listening.
 	async function handleCommand(
+		command: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const result = await dispatch(command);
+		if (result.ok !== true || command.op === "quit") return result;
+		try {
+			await session.flush();
+			return result;
+		} catch (error) {
+			return {
+				ok: false,
+				error: `applied locally but not delivered: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+	}
+
+	async function dispatch(
 		command: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
 		const op = command.op;
@@ -258,11 +285,18 @@ export function startAgentDaemon(
 			return { ok: true, text: session.text.toString() };
 		}
 		if (op === "type" && typeof command.text === "string") {
-			await typeText(
+			const typed = await typeText(
 				session,
 				command.text,
 				typeof command.cps === "number" ? command.cps : undefined,
 			);
+			if (!typed) {
+				return {
+					ok: false,
+					error:
+						"type: the room is ready and would send on the first character; use appendLine",
+				};
+			}
 			return { ok: true, text: session.text.toString() };
 		}
 		if (op === "insert" && typeof command.text === "string") {
@@ -340,7 +374,7 @@ export function startAgentDaemon(
 				});
 				return;
 			}
-			void readBody(request)
+			void readBody(request, COMMAND_LIMIT_BYTES)
 				.then((body) => JSON.parse(body) as Record<string, unknown>)
 				.then((command) => enqueue(() => handleCommand(command)))
 				.then((result) => respond(200, result))

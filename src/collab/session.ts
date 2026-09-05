@@ -146,6 +146,12 @@ export interface CollabSession {
 	 * never ready.
 	 */
 	isEveryoneReady(): boolean;
+	/**
+	 * Resolves once every frame posted so far has landed at the relay; rejects
+	 * if any was refused outright, in which case the peers never saw that edit
+	 * and whoever made it should be told.
+	 */
+	flush(): Promise<void>;
 	/** Tear everything down: drop presence and destroy the doc/awareness. */
 	destroy(): void;
 }
@@ -286,19 +292,29 @@ export function createCollabSession(
 	}
 
 	// --- The wire: relay binary doc updates over the channel -------------------
+	// Every post is kept until it settles so flush() can report on all of them;
+	// the catch keeps a refusal from surfacing as an unhandled rejection when
+	// nobody is waiting.
+	const inFlight = new Set<Promise<void>>();
+	function post(frame: unknown): void {
+		const delivery = channel.post(frame);
+		inFlight.add(delivery);
+		delivery.catch(() => undefined).finally(() => inFlight.delete(delivery));
+	}
+	function flush(): Promise<void> {
+		return Promise.all(inFlight).then(() => undefined);
+	}
+
 	doc.on("update", (update: Uint8Array, origin: unknown) => {
 		if (origin === NETWORK_ORIGIN) return; // arrived from a peer; don't echo
-		channel.post({ t: "u", d: toBase64(update) });
+		post({ t: "u", d: toBase64(update) });
 	});
 
 	// --- The same wire for presence: relay awareness (cursors) ----------------
 	awareness.on("update", (changes: AwarenessChanges, origin: unknown) => {
 		if (origin === NETWORK_ORIGIN) return;
 		const clients = [...changes.added, ...changes.updated, ...changes.removed];
-		channel.post({
-			t: "a",
-			d: toBase64(encodeAwarenessUpdate(awareness, clients)),
-		});
+		post({ t: "a", d: toBase64(encodeAwarenessUpdate(awareness, clients)) });
 	});
 
 	const unsubscribe = channel.subscribe((frame) => {
@@ -436,6 +452,7 @@ export function createCollabSession(
 		isReady,
 		readyTally,
 		isEveryoneReady,
+		flush,
 		destroy() {
 			awareness.off("change", reconcilePresence);
 			readyFlags.unobserve(onRoomChanged);

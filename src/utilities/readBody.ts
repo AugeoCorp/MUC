@@ -3,10 +3,10 @@ import type { IncomingMessage } from "node:http";
 /** The most a request body may carry. A frame is a few hundred bytes; a whole compacted document is far under this. */
 export const BODY_LIMIT_BYTES = 1_048_576;
 
-/** Thrown by `readBody` when a request runs past `BODY_LIMIT_BYTES`; answer it with 413, then destroy the request. */
+/** Thrown by `readBody` when a request runs past its limit; answer it with 413, then destroy the request. */
 export class BodyTooLargeError extends Error {
-	constructor() {
-		super(`request body exceeds ${BODY_LIMIT_BYTES} bytes`);
+	constructor(limit: number) {
+		super(`request body exceeds ${limit} bytes`);
 		this.name = "BodyTooLargeError";
 	}
 }
@@ -20,7 +20,10 @@ export class BodyTooLargeError extends Error {
  * response is out. Callers must handle the rejection or it escapes as an
  * unhandled one.
  */
-export function readBody(request: IncomingMessage): Promise<string> {
+export function readBody(
+	request: IncomingMessage,
+	limit = BODY_LIMIT_BYTES,
+): Promise<string> {
 	return new Promise((resolve, reject) => {
 		let data = "";
 		let received = 0;
@@ -31,10 +34,10 @@ export function readBody(request: IncomingMessage): Promise<string> {
 		request.on("data", (chunk: string) => {
 			if (refused) return;
 			received += Buffer.byteLength(chunk);
-			if (received > BODY_LIMIT_BYTES) {
+			if (received > limit) {
 				refused = true;
 				request.pause();
-				reject(new BodyTooLargeError());
+				reject(new BodyTooLargeError(limit));
 				return;
 			}
 			data += chunk;

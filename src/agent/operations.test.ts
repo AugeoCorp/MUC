@@ -120,6 +120,21 @@ describe("replaceText", () => {
 	});
 });
 
+describe("typeText", () => {
+	it("refuses a room that is already ready, so one character can't be the message", async () => {
+		const [agentSession, humanSession] = createAgentWithPeer();
+		humanSession.setReady(true);
+		expect(await typeText(agentSession, "hello", 100)).toBe(false);
+		expect(agentSession.text.toString()).toBe("");
+	});
+
+	it("types when the room is not ready", async () => {
+		const [agentSession] = createAgentWithPeer();
+		expect(await typeText(agentSession, "hi", 100)).toBe(true);
+		expect(agentSession.text.toString()).toBe("hi");
+	});
+});
+
 describe("applySplices", () => {
 	it("applies a batch against pre-batch indices in one transaction", () => {
 		const [agentSession] = createAgentWithPeer();
