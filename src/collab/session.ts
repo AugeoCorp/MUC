@@ -5,8 +5,9 @@
 // Each participant has ONE Y.Doc. Every local edit makes Yjs emit a binary
 // update, which we base64-encode into a frame and post on the channel; inbound
 // frames are applied to the doc. Cursors travel the same way via y-protocols
-// awareness. Because the relay replays its whole log to a late joiner, applying
-// that backlog reconstructs the full document automatically.
+// awareness; ready flags live in the doc itself (see READY_KEY). Because the
+// relay replays its retained (compacted) log to a late joiner, applying that
+// backlog reconstructs the full document automatically.
 
 import {
 	Awareness,
@@ -16,6 +17,8 @@ import {
 } from "y-protocols/awareness";
 import * as Y from "yjs";
 import type { Channel } from "../net/channel.ts";
+import { fromBase64, toBase64 } from "../utilities/base64.ts";
+import { clamp } from "../utilities/clamp.ts";
 import { hexFromHue, hueInLargestGap } from "./colors.ts";
 import { decodeCursor, encodeCursor } from "./cursors.ts";
 
@@ -30,14 +33,23 @@ export interface UserInfo {
 	name: string;
 	/** Any ink-compatible color (named color or hex). */
 	color: string;
-	/** What kind of participant this is. Absent counts as human. */
-	kind?: ParticipantKind;
+	/**
+	 * What kind of participant this is. Agents never gate the ready-to-send
+	 * quorum. On the wire an absent kind counts as human — older clients that
+	 * don't send one must still be able to hold up the send.
+	 */
+	kind: ParticipantKind;
 	/**
 	 * Free-form note on who this participant is and why they're here, shown
 	 * beside their name. Meant for participants who aren't people: an agent can
 	 * say what it is and what it's watching the draft for.
 	 */
 	descriptor?: string;
+}
+
+/** True when a participant should count toward the ready quorum. */
+export function isHuman(user: { kind?: ParticipantKind }): boolean {
+	return user.kind !== "agent";
 }
 
 /**
@@ -59,6 +71,14 @@ export const MESSAGES_KEY = "messages";
 
 /** The server's color assignments — clientId (as a string) → hue, 0–360. */
 export const COLORS_KEY = "colors";
+
+/**
+ * Ready flags — clientId (as a string) → whether that participant has signed
+ * off on the draft. They live in the doc rather than in awareness so that an
+ * edit and the flag it withdraws travel in one update: a flag can never be
+ * seen beside text it wasn't set against.
+ */
+export const READY_KEY = "ready";
 
 // Edits the local user makes are tagged LOCAL_ORIGIN (so undo can track only
 // them); edits that arrived from a peer are tagged NETWORK_ORIGIN (so we never
@@ -82,6 +102,8 @@ export interface CollabSession {
 	messages: Y.Array<string>;
 	/** The server's hue assignments; observe it to re-render when they change. */
 	colors: Y.Map<number>;
+	/** Everyone's ready flags; observe it to re-render when they change. */
+	readyFlags: Y.Map<boolean>;
 	awareness: Awareness;
 	undoManager: Y.UndoManager;
 	user: UserInfo;
@@ -93,6 +115,13 @@ export interface CollabSession {
 	getRemoteCursors(): RemoteCursor[];
 	/** The local user's color — the server's assignment, or their own pick. */
 	localColor(): string;
+	/**
+	 * Apply a local edit. `mutate` runs in one transaction together with the
+	 * withdrawal of the local user's own ready flag — the draft they signed off
+	 * on no longer exists. No one else's flag is touched: a human's ✓ is theirs
+	 * alone, and an agent's edit neither adds to nor removes it.
+	 */
+	edit(mutate: () => void): void;
 	/** A participant's color, or undefined if we've never heard of them. */
 	colorFor(clientId: number): string | undefined;
 	/**
@@ -107,10 +136,22 @@ export interface CollabSession {
 	/** Whether the local user is currently ready. */
 	isReady(): boolean;
 	/**
-	 * Whether every present participant is ready. The local user counts too,
-	 * except for a `server`, which has no draft of its own to sign off on.
+	 * How many humans are present and how many of them are ready. The local
+	 * user counts too, except for a `server` (no draft of its own to sign off
+	 * on) or an agent (agents never gate the send).
+	 */
+	readyTally(): { ready: number; total: number };
+	/**
+	 * Whether every present human is ready. A room with no humans in it is
+	 * never ready.
 	 */
 	isEveryoneReady(): boolean;
+	/**
+	 * Resolves once every frame posted so far has landed at the relay; rejects
+	 * if any was refused outright, in which case the peers never saw that edit
+	 * and whoever made it should be told.
+	 */
+	flush(): Promise<void>;
 	/** Tear everything down: drop presence and destroy the doc/awareness. */
 	destroy(): void;
 }
@@ -120,11 +161,6 @@ interface AwarenessChanges {
 	updated: number[];
 	removed: number[];
 }
-
-const toBase64 = (bytes: Uint8Array): string =>
-	Buffer.from(bytes).toString("base64");
-const fromBase64 = (text: string): Uint8Array =>
-	new Uint8Array(Buffer.from(text, "base64"));
 
 export function createCollabSession(
 	channel: Channel,
@@ -136,58 +172,63 @@ export function createCollabSession(
 	const text = doc.getText(CONTENT_KEY);
 	const messages = doc.getArray<string>(MESSAGES_KEY);
 	const colors = doc.getMap<number>(COLORS_KEY);
+	const readyFlags = doc.getMap<boolean>(READY_KEY);
 	const awareness = new Awareness(doc);
+	const localKey = String(doc.clientID);
 
-	// Local awareness state (cursor + ready) is written from one place so the two
-	// fields never clobber each other. The cursor is stored as a relative
-	// position (see cursors.ts) so it survives concurrent edits.
-	let localCursor = encodeCursor(text, text.length);
-	let localReady = false;
-	function publishLocalState(): void {
+	// The cursor is stored as a relative position (see cursors.ts) so it
+	// survives concurrent edits.
+	function publishCursor(index: number): void {
 		// A server watches the room without being in it: publishing nothing is
-		// what keeps it out of everyone's cursor list and ready count.
+		// what keeps it out of everyone's cursor list.
 		if (role === "server") return;
-		awareness.setLocalState({ user, cursor: localCursor, ready: localReady });
+		awareness.setLocalState({ user, cursor: encodeCursor(text, index) });
 	}
 
-	function publishCursor(index: number): void {
-		localCursor = encodeCursor(text, index);
-		publishLocalState();
+	function edit(mutate: () => void): void {
+		doc.transact(() => {
+			mutate();
+			if (readyFlags.get(localKey) === true) readyFlags.delete(localKey);
+		}, LOCAL_ORIGIN);
 	}
 
 	function setReady(ready: boolean): void {
-		if (ready === localReady) return; // unchanged — stay off the wire
-		localReady = ready;
-		publishLocalState();
+		if (role === "server") return; // holds no draft, so has nothing to sign
+		if (ready === isReady()) return; // unchanged — stay off the wire
+		doc.transact(() => {
+			if (ready) readyFlags.set(localKey, true);
+			else readyFlags.delete(localKey);
+		}, LOCAL_ORIGIN);
 	}
 
 	function isReady(): boolean {
-		return localReady;
+		return readyFlags.get(localKey) === true;
 	}
 
 	function getLocalIndex(): number {
 		const state = awareness.getLocalState() as { cursor?: number[] } | null;
 		const index = decodeCursor(state?.cursor, doc);
 		if (index === undefined) return text.length;
-		return Math.max(0, Math.min(index, text.length));
+		return clamp(index, 0, text.length);
 	}
 
 	function getRemoteCursors(): RemoteCursor[] {
 		const cursors: RemoteCursor[] = [];
 		awareness.getStates().forEach((state, clientId) => {
 			if (clientId === doc.clientID) return;
-			const entry = state as {
-				cursor?: number[];
-				user?: UserInfo;
-				ready?: boolean;
-			};
+			const entry = state as { cursor?: number[]; user?: UserInfo };
 			if (entry.user === undefined) return;
 			cursors.push({
 				clientId,
-				// The assigned color wins over the one they picked for themselves.
-				user: { ...entry.user, color: colorOf(clientId, entry.user.color) },
+				user: {
+					...entry.user,
+					// An older client sends no kind; on the wire that means human.
+					kind: entry.user.kind === "agent" ? "agent" : "human",
+					// The assigned color wins over the one they picked for themselves.
+					color: colorOf(clientId, entry.user.color),
+				},
 				index: decodeCursor(entry.cursor, doc),
-				ready: entry.ready === true,
+				ready: readyFlags.get(String(clientId)) === true,
 			});
 		});
 		return cursors;
@@ -212,6 +253,22 @@ export function createCollabSession(
 		return colorOf(doc.clientID, user.color);
 	}
 
+	function readyTally(): { ready: number; total: number } {
+		// Only humans gate the send: agents draft alongside everyone else but
+		// never hold a message up. A server holds no draft, so it has no flag of
+		// its own to add — it waits on the people who do.
+		const remoteHumans = getRemoteCursors().filter((cursor) =>
+			isHuman(cursor.user),
+		);
+		const localCounts = role !== "server" && isHuman(user);
+		return {
+			ready:
+				remoteHumans.filter((cursor) => cursor.ready).length +
+				(localCounts && isReady() ? 1 : 0),
+			total: remoteHumans.length + (localCounts ? 1 : 0),
+		};
+	}
+
 	function getAuthors(): (number | undefined)[] {
 		const authors: (number | undefined)[] = [];
 		text.toDelta().forEach((operation: { insert?: unknown }) => {
@@ -228,31 +285,36 @@ export function createCollabSession(
 	}
 
 	function isEveryoneReady(): boolean {
-		const remote = getRemoteCursors();
-		// The server holds no draft, so it has no flag to add — it waits on the
-		// people who do. An empty room is never ready, or it would fire the moment
-		// the last person left.
-		if (role === "server") {
-			return remote.length > 0 && remote.every((cursor) => cursor.ready);
-		}
-		if (!localReady) return false;
-		return remote.every((cursor) => cursor.ready);
+		// Some human must actually be present, or the quorum would pass
+		// vacuously the moment the last person left.
+		const tally = readyTally();
+		return tally.total > 0 && tally.ready === tally.total;
 	}
 
 	// --- The wire: relay binary doc updates over the channel -------------------
+	// Every post is kept until it settles so flush() can report on all of them;
+	// the catch keeps a refusal from surfacing as an unhandled rejection when
+	// nobody is waiting.
+	const inFlight = new Set<Promise<void>>();
+	function post(frame: unknown): void {
+		const delivery = channel.post(frame);
+		inFlight.add(delivery);
+		delivery.catch(() => undefined).finally(() => inFlight.delete(delivery));
+	}
+	function flush(): Promise<void> {
+		return Promise.all(inFlight).then(() => undefined);
+	}
+
 	doc.on("update", (update: Uint8Array, origin: unknown) => {
 		if (origin === NETWORK_ORIGIN) return; // arrived from a peer; don't echo
-		channel.post({ t: "u", d: toBase64(update) });
+		post({ t: "u", d: toBase64(update) });
 	});
 
 	// --- The same wire for presence: relay awareness (cursors) ----------------
 	awareness.on("update", (changes: AwarenessChanges, origin: unknown) => {
 		if (origin === NETWORK_ORIGIN) return;
 		const clients = [...changes.added, ...changes.updated, ...changes.removed];
-		channel.post({
-			t: "a",
-			d: toBase64(encodeAwarenessUpdate(awareness, clients)),
-		});
+		post({ t: "a", d: toBase64(encodeAwarenessUpdate(awareness, clients)) });
 	});
 
 	const unsubscribe = channel.subscribe((frame) => {
@@ -264,6 +326,11 @@ export function createCollabSession(
 			applyAwarenessUpdate(awareness, fromBase64(message.d), NETWORK_ORIGIN);
 		}
 	});
+
+	// Announce ourselves now that the wire is attached — until a participant's
+	// user info reaches the channel, peers can't see them, and an invisible
+	// human can't gate the ready quorum (the host would submit as if alone).
+	publishCursor(text.length);
 
 	// --- Local-only undo/redo -------------------------------------------------
 	// Scoped to LOCAL_ORIGIN so undo/redo never touch a peer's edits. Yjs still
@@ -289,16 +356,17 @@ export function createCollabSession(
 			doc,
 		);
 		if (absolutePosition) {
-			publishCursor(Math.max(0, Math.min(absolutePosition.index, text.length)));
+			publishCursor(clamp(absolutePosition.index, 0, text.length));
 		}
 	});
 
 	// --- Ready → send ---------------------------------------------------------
 	// One session is the single writer that turns "everyone ready" into a sent
-	// message: it appends the trimmed draft to the shared log and clears the
-	// composer, both in one transaction that syncs to every peer. Exactly one
-	// acts, so the log never gains duplicate copies from a simultaneous trigger —
-	// the server where there is one, and the lone user in `muc solo`.
+	// message: it appends the trimmed draft to the shared log, clears the
+	// composer, and withdraws every ready flag, all in one transaction that
+	// syncs to every peer. Exactly one acts, so the log never gains duplicate
+	// copies from a simultaneous trigger — the server where there is one, and
+	// the lone user in `muc solo`.
 	function submitIfEveryoneReady(): void {
 		if (role === "participant") return;
 		if (!isEveryoneReady()) return;
@@ -307,16 +375,19 @@ export function createCollabSession(
 		doc.transact(() => {
 			messages.push([draft]);
 			text.delete(0, text.length);
+			readyFlags.forEach((_, key) => readyFlags.delete(key));
 		}, LOCAL_ORIGIN);
 	}
 
-	// --- Colors ---------------------------------------------------------------
+	// --- Presence bookkeeping -------------------------------------------------
 	// Handing out colors needs one view of who's in the room, which is exactly
 	// what the server has and no client does. Each arrival gets the hue furthest
 	// from everyone already here (see colors.ts), written into a shared map that
 	// everyone renders from. Clients fall back to their own pick where there's no
 	// server to ask (`muc solo`, or the instant before the assignment lands).
-	function assignColors(): void {
+	// Whoever left takes their hue and their ready flag with them — a flag with
+	// no one behind it must not linger in the doc.
+	function reconcilePresence(): void {
 		if (role !== "server") return;
 
 		const present = new Set<string>();
@@ -326,13 +397,18 @@ export function createCollabSession(
 			present.add(String(clientId));
 		});
 
-		const departed = [...colors.keys()].filter((key) => !present.has(key));
+		const departed = [
+			...new Set([...colors.keys(), ...readyFlags.keys()]),
+		].filter((key) => !present.has(key));
 		const arrived = [...present].filter((key) => !colors.has(key));
 		if (departed.length === 0 && arrived.length === 0) return;
 
 		doc.transact(() => {
 			// Freeing a departed participant's hue first reopens that gap.
-			departed.forEach((key) => colors.delete(key));
+			departed.forEach((key) => {
+				colors.delete(key);
+				readyFlags.delete(key);
+			});
 			// Reading the map back each time — rather than once up front — is what
 			// spreads a burst of simultaneous arrivals instead of stacking them.
 			arrived.forEach((key) =>
@@ -341,16 +417,19 @@ export function createCollabSession(
 		}, LOCAL_ORIGIN);
 	}
 
+	// Re-check on flags and on text. A human's edit can never send on its own:
+	// it travels with the withdrawal of their flag, so the room is not ready
+	// when it lands. An agent's edit into a room that is already ready does
+	// send — agents never gate the send, in either direction — which is why
+	// the skill tells them to keep unfinished work visible in the text.
+	const onRoomChanged = (): void => submitIfEveryoneReady();
 	// Whenever a message lands — from our own submit or a peer's — every client
-	// clears its own ready flag so the next draft starts clean. A client can only
-	// reset itself, so this fires everywhere rather than the server reaching into
-	// anyone else's presence.
-	const onPresenceChange = (): void => {
-		assignColors();
-		submitIfEveryoneReady();
-	};
+	// also clears its own flag, covering the one race the submit's own clear
+	// can't: a flag set in the same instant the draft went out.
 	const onMessageAdded = (): void => setReady(false);
-	awareness.on("change", onPresenceChange);
+	awareness.on("change", reconcilePresence);
+	readyFlags.observe(onRoomChanged);
+	text.observe(onRoomChanged);
 	messages.observe(onMessageAdded);
 
 	return {
@@ -358,6 +437,7 @@ export function createCollabSession(
 		text,
 		messages,
 		colors,
+		readyFlags,
 		awareness,
 		undoManager,
 		user,
@@ -365,13 +445,18 @@ export function createCollabSession(
 		getLocalIndex,
 		getRemoteCursors,
 		localColor,
+		edit,
 		colorFor,
 		getAuthors,
 		setReady,
 		isReady,
+		readyTally,
 		isEveryoneReady,
+		flush,
 		destroy() {
-			awareness.off("change", onPresenceChange);
+			awareness.off("change", reconcilePresence);
+			readyFlags.unobserve(onRoomChanged);
+			text.unobserve(onRoomChanged);
 			messages.unobserve(onMessageAdded);
 			unsubscribe();
 			undoManager.destroy();

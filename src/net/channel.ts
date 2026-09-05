@@ -7,17 +7,41 @@
 // quick tunnel won't reliably forward a long-lived server→client stream.
 
 export interface Channel {
-	/** Broadcast a frame to every other participant. */
-	post(frame: unknown): void;
+	/**
+	 * Broadcast a frame to every other participant. Frames leave in the order
+	 * they were posted; the promise resolves once this one has landed, and
+	 * rejects with `FrameRefusedError` if the relay refused it outright — that
+	 * frame is gone, and the caller is the one who can say so.
+	 */
+	post(frame: unknown): Promise<void>;
 	/** Register a listener for inbound frames; returns an unsubscribe. */
 	subscribe(listener: (frame: unknown) => void): () => void;
-	/** Stop polling and drop all listeners. */
-	disconnect(): void;
+	/** Stop polling and drop all listeners, once every posted frame is out. */
+	disconnect(): Promise<void>;
 }
 
 // How often we ask the relay for anything new. Fast enough to feel live, slow
 // enough to stay cheap.
 const POLL_INTERVAL = 800;
+
+// How long one POST attempt may take. Posts go out one at a time so their
+// order holds, which means one that hangs would hold up every frame behind it.
+const POST_TIMEOUT = 10_000;
+
+// A failed POST is tried again after this long, doubling each time up to the
+// cap, until it lands or the channel disconnects. A frame that never lands
+// is worse than a late one: every peer holds this client's later updates as
+// pending until the gap fills, so the room quietly forks.
+const RETRY_DELAY = 500;
+const RETRY_DELAY_CAP = 8_000;
+
+/** The relay answered 4xx: it has made up its mind, and retrying would only wedge every frame behind this one. */
+export class FrameRefusedError extends Error {
+	constructor(readonly status: number) {
+		super(`relay refused the frame (${status})`);
+		this.name = "FrameRefusedError";
+	}
+}
 
 interface MessagesResponse {
 	cursor: number;
@@ -64,22 +88,95 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 
 	const timer = setInterval(() => void poll(), POLL_INTERVAL);
 
+	// One POST at a time. Two in flight at once can land at the relay in either
+	// order, and an edit overtaking the flag it withdrew is exactly the kind of
+	// reorder the session must never see.
+	let outbound: Promise<void> = Promise.resolve();
+	let disconnected = false;
+	let cancelBackoff: (() => void) | undefined;
+
+	// Every frame gets at least one attempt, even after disconnect — the
+	// departure frame is posted on the way out and must still leave. Only a
+	// network failure or a 5xx is worth another try.
+	async function deliver(body: string): Promise<void> {
+		let attempt = 0;
+		while (true) {
+			try {
+				const response = await fetch(sendUrl, {
+					method: "POST",
+					body,
+					signal: AbortSignal.timeout(POST_TIMEOUT),
+				});
+				if (response.ok) return;
+				if (response.status >= 400 && response.status < 500) {
+					throw new FrameRefusedError(response.status);
+				}
+			} catch (error) {
+				if (error instanceof FrameRefusedError) throw error;
+				// Timed out or unreachable — same treatment as a 5xx.
+			}
+			if (disconnected) return;
+			const delay = Math.min(RETRY_DELAY * 2 ** attempt, RETRY_DELAY_CAP);
+			attempt += 1;
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(resolve, delay);
+				cancelBackoff = () => {
+					clearTimeout(timeout);
+					resolve();
+				};
+			});
+			if (disconnected) return;
+		}
+	}
+
 	return {
 		post(frame) {
-			void fetch(sendUrl, {
-				method: "POST",
-				body: JSON.stringify(frame),
-			}).catch(() => undefined);
+			const body = JSON.stringify(frame);
+			const delivery = outbound.then(() => deliver(body));
+			// A refusal is the poster's to hear about; the queue itself moves on.
+			outbound = delivery.catch(() => undefined);
+			return delivery;
 		},
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
-		disconnect() {
+		async disconnect() {
 			clearInterval(timer);
 			listeners.clear();
+			// Whatever is queued gets one more try each; nothing waits out a
+			// backoff on the way out.
+			disconnected = true;
+			cancelBackoff?.();
+			await outbound;
 		},
 	};
+}
+
+// Two channels wired back-to-back: whatever one posts, the other's listeners
+// receive, synchronously. Used to connect two in-process sessions — tests, and
+// eventually multiple agent personas sharing one process.
+export function createChannelPair(): [Channel, Channel] {
+	const listenersA = new Set<(frame: unknown) => void>();
+	const listenersB = new Set<(frame: unknown) => void>();
+	const endpoint = (
+		own: Set<(frame: unknown) => void>,
+		other: Set<(frame: unknown) => void>,
+	): Channel => ({
+		post(frame) {
+			other.forEach((listener) => listener(frame));
+			return Promise.resolve();
+		},
+		subscribe(listener) {
+			own.add(listener);
+			return () => own.delete(listener);
+		},
+		disconnect() {
+			own.clear();
+			return Promise.resolve();
+		},
+	});
+	return [endpoint(listenersA, listenersB), endpoint(listenersB, listenersA)];
 }
 
 // A no-op channel for solo editing (`muc solo`): nothing is broadcast and
@@ -87,13 +184,16 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 export function createLocalChannel(): Channel {
 	const listeners = new Set<(frame: unknown) => void>();
 	return {
-		post() {},
+		post() {
+			return Promise.resolve();
+		},
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
 		},
 		disconnect() {
 			listeners.clear();
+			return Promise.resolve();
 		},
 	};
 }

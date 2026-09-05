@@ -263,28 +263,30 @@ export function applyKey(
 	seq: string,
 	width: number,
 ): void {
-	// Every edit clears the ready flag: changing the draft means you're no longer
-	// signed off on it. setReady(false) is a no-op when already un-ready.
-	// Every insert is stamped with who made it, which is what the authorship lens
+	// Every edit withdraws the ready flag: changing the draft means you're no
+	// longer signed off on it. session.edit does both in one update. Every
+	// insert is stamped with who made it, which is what the authorship lens
 	// (⌃t) reads back. Yjs already knows internally; the attribute just puts it
 	// somewhere public.
 	const insert = (index: number, value: string): void => {
-		session.doc.transact(
-			() => session.text.insert(index, value, { author: session.doc.clientID }),
-			LOCAL_ORIGIN,
+		session.edit(() =>
+			session.text.insert(index, value, { author: session.doc.clientID }),
 		);
-		session.setReady(false);
 	};
 	const remove = (index: number, count: number): void => {
-		session.doc.transact(() => session.text.delete(index, count), LOCAL_ORIGIN);
-		session.setReady(false);
+		session.edit(() => session.text.delete(index, count));
 	};
 
+	// Undo and redo change the draft like any edit, so they withdraw the flag
+	// too — ahead of the change, so no one ever sees the flag beside the new
+	// text (the undo manager runs its own transaction, which can't be joined).
 	if (seq === "\x1a") {
+		session.setReady(false);
 		session.undoManager.undo(); // Ctrl+Z
 		return;
 	}
 	if (seq === "\x19") {
+		session.setReady(false);
 		session.undoManager.redo(); // Ctrl+Y
 		return;
 	}
@@ -533,11 +535,13 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 
 		session.text.observe(onText);
 		session.awareness.on("change", bump);
+		session.readyFlags.observe(bump);
 		// The server reassigns colors as people come and go.
 		session.colors.observe(bump);
 		return () => {
 			session.text.unobserve(onText);
 			session.awareness.off("change", bump);
+			session.readyFlags.unobserve(bump);
 			session.colors.unobserve(bump);
 		};
 	}, [session]);
@@ -638,11 +642,9 @@ export function Editor({ session, shareCode }: EditorProps): ReactElement {
 	const localIndex = session.getLocalIndex();
 	const remoteCursors = session.getRemoteCursors();
 	const localReady = session.isReady();
-	const participantCount = 1 + remoteCursors.length;
-	const readyCount =
-		(localReady ? 1 : 0) +
-		remoteCursors.filter((cursor) => cursor.ready).length;
-	const everyoneReady = readyCount === participantCount;
+	// Only humans gate the send — agents appear in the legend but not the tally.
+	const { ready: readyCount, total: participantCount } = session.readyTally();
+	const everyoneReady = session.isEveryoneReady();
 
 	// index -> color for the first remote cursor sitting on each cell.
 	const remoteByIndex = new Map<number, string>();

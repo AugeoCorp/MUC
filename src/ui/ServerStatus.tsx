@@ -53,16 +53,19 @@ export function ServerStatus({
 		const bump = () => setVersion((version) => version + 1);
 		session.awareness.on("change", bump);
 		session.messages.observe(bump);
+		session.readyFlags.observe(bump);
 		session.colors.observe(bump);
 		return () => {
 			session.awareness.off("change", bump);
 			session.messages.unobserve(bump);
+			session.readyFlags.unobserve(bump);
 			session.colors.unobserve(bump);
 		};
 	}, [session]);
 
 	const drafters = session.getRemoteCursors();
-	const readyCount = drafters.filter((cursor) => cursor.ready).length;
+	// Only humans gate the send — agents appear in the room but not the tally.
+	const { ready: readyCount, total: humanCount } = session.readyTally();
 	const everyoneReady = session.isEveryoneReady();
 	const sentMessages = session.messages.toArray();
 
@@ -99,7 +102,7 @@ export function ServerStatus({
 			</Box>
 			<Text>
 				<Text color={everyoneReady ? "green" : "yellow"}>
-					{readyCount}/{drafters.length} ready
+					{readyCount}/{humanCount} ready
 				</Text>
 				<Text color="gray">
 					{everyoneReady ? " · sending…" : " · waiting on the room"}

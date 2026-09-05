@@ -48,10 +48,34 @@ peer-to-peer.
   streaming is deliberately avoided; a quick tunnel won't reliably forward one.
 - The shared state lives in `src/collab/session.ts`: local edits and cursors are
   encoded as base64 frames and ridden over the channel, and inbound frames are
-  applied to the Yjs doc. Because the relay replays its whole log to a late
-  joiner, the document reconstructs automatically.
+  applied to the Yjs doc. Because the relay replays its retained log to a late
+  joiner, the document reconstructs automatically. **Ready flags live in the
+  doc**, not in awareness: `session.edit` withdraws the editor's own flag in the
+  same transaction as the edit, so no one can ever see a human's flag beside
+  text that human hasn't seen. An agent's edit touches no one's flag — agents
+  gate the send in neither direction. A channel posts frames one at a time, in
+  order, for the same reason, and retries a frame that fails to land until it
+  does or the channel disconnects — a lost frame would leave every peer waiting
+  on it.
+- The relay **compacts** that log so it never grows without bound: runs of
+  consecutive document frames are periodically merged into one via
+  `Y.mergeUpdates` (merged replay ≡ original replay, since Yjs updates are
+  idempotent and commutative; only consecutive frames merge, so replay order is
+  arrival order), awareness frames older than ~90 seconds age out (live clients
+  re-announce every ~15 seconds; departed ones stop replaying as ghosts), and
+  frames the relay can't parse are kept forever untouched. Client cursors are
+  sequence numbers, so they survive compaction — a cursor inside a merged run
+  just receives the whole merged frame, which is redundant but harmless for Yjs.
 - The UI (`src/ui/Editor.tsx`) treats Yjs as the single source of truth — React
   never stores the text, it re-renders from the doc.
+- **AI agents can sit at the box too**: `muc agent <code>` (`src/agent/`) joins
+  as a headless participant with `UserInfo.kind: "agent"` and drives the session
+  through a localhost control API (`GET /state`, `GET /events` long-poll,
+  `POST /cmd` with a serialized op queue) instead of a TUI. Agents draft like
+  anyone else but **never gate the ready quorum** — only humans count toward
+  "everyone ready". The full control-API reference lives inside the portable
+  [`muc-agent` skill](./.claude/skills/muc-agent/SKILL.md):
+  [`.claude/skills/muc-agent/agent-protocol.md`](./.claude/skills/muc-agent/agent-protocol.md).
 
 **The seam** is the `Channel` interface (`src/net/channel.ts`), where the
 network meets the collaboration layer. Two implementations exist today: the
@@ -82,7 +106,7 @@ tunnel-backed channel and a no-op `createLocalChannel` for solo editing
 
 ```
 src/
-├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`
+├── cli.tsx                # citty entrypoint + shebang; `muc`, `serve`, `connect`, `agent`
 ├── app.tsx                # root <App> — wires channel ↔ collab session ↔ UI
 ├── sessions.ts            # the server writes each sent draft to sessions/*.md
 ├── ui/
@@ -94,15 +118,18 @@ src/
 │   └── useConfirmQuit.ts   # ⌃c twice to quit, shared by the client and server
 ├── collab/
 │   ├── session.ts          # Yjs wiring: doc, awareness, undo, channel relay
+│   ├── session.test.ts     # quorum / sync / submit coverage over loopback channels
 │   ├── cursors.ts          # relative-position cursor encode / decode
 │   └── colors.ts           # hue generation: widest-gap assignment, hue → hex
+├── agent/
+│   ├── index.ts            # barrel export
+│   ├── daemon.ts           # localhost control API: /state, /events, /cmd op queue
+│   └── operations.ts       # agent edit ops: appendLine, replaceText, splices, typing
 ├── net/
 │   ├── channel.ts          # Channel interface + tunnel / local implementations
 │   ├── relay.ts            # local HTTP message-log server (the host runs this)
 │   └── tunnel.ts           # spawns `cloudflared`; session code ↔ relay URL
-└── utilities/
-    ├── assertValue.ts
-    └── assertValue.test.ts
+└── utilities/             # small shared helpers: clamp, listen, readBody (bounded), …
 
 dist/                      # gitignored — tsdown output (the published bin)
 ```
@@ -121,6 +148,11 @@ dist/                      # gitignored — tsdown output (the published bin)
 
 `npm run verify` is the canonical "before commit / before handoff" check. Run it
 after any non-trivial change, not just at submit time.
+
+`prepare` also runs `tsdown`, so that `npm install git+https://…` of this repo
+yields a working `muc` bin (the portable skill's pre-publish fallback). It needs
+the devDependencies, so an `npm install --omit=dev` _of this repo itself_ fails;
+that trade is deliberate.
 
 ## Formatting
 
@@ -170,6 +202,15 @@ after any non-trivial change, not just at submit time.
   peer-to-peer.
 - **One problem at a time** for complex multi-file changes. Fix one and verify
   before continuing.
+
+## Writing for Agents
+
+Skills, briefs, and this file are read by agents. Agents are like you:
+intelligent. So let them figure out what to do. Where possible, carefully craft
+principles instead of specific rules. Like a healthy abstraction in software, or
+generalization in an ML model, or direction to an improv troupe, prompts should
+allow agents to derive specifics from the general. It isn't always possible, but
+do think hard about how to express files like this as generalizable principles.
 
 ## Before Submitting Changes
 
