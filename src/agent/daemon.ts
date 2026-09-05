@@ -344,12 +344,19 @@ export function startAgentDaemon(
 				.then((body) => JSON.parse(body) as Record<string, unknown>)
 				.then((command) => enqueue(() => handleCommand(command)))
 				.then((result) => respond(200, result))
-				.catch((error) =>
-					respond(error instanceof BodyTooLargeError ? 413 : 400, {
-						ok: false,
-						error: String(error),
-					}),
-				);
+				.catch((error) => {
+					if (error instanceof BodyTooLargeError) {
+						// Answer first, then drop the request: a socket destroyed
+						// before the status leaves shows the agent nothing but a reset.
+						response.writeHead(413, { "content-type": "application/json" });
+						response.end(
+							JSON.stringify({ ok: false, error: String(error) }),
+							() => request.destroy(),
+						);
+						return;
+					}
+					respond(400, { ok: false, error: String(error) });
+				});
 			return;
 		}
 		respond(404, { ok: false, error: "not found" });

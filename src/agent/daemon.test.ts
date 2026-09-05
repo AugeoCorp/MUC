@@ -5,6 +5,7 @@ import {
 	type UserInfo,
 } from "../collab/session.ts";
 import { createChannelPair } from "../net/channel.ts";
+import { BODY_LIMIT_BYTES } from "../utilities/readBody.ts";
 import { type AgentDaemon, startAgentDaemon } from "./daemon.ts";
 
 const agentUser: UserInfo = { name: "scribe", color: "green", kind: "agent" };
@@ -235,6 +236,31 @@ describe("agent daemon", () => {
 		});
 		expect(response.status).toBe(415);
 		expect(fixture.agentSession.text.toString()).toBe("");
+	});
+
+	it("answers 413 to an oversized command, with the status actually delivered", async () => {
+		const fixture = await createFixture();
+		const response = await fetch(`${fixture.base}/cmd`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				op: "appendLine",
+				line: "x".repeat(BODY_LIMIT_BYTES),
+			}),
+		});
+		expect(response.status).toBe(413);
+		expect(((await response.json()) as { ok: boolean }).ok).toBe(false);
+		expect(fixture.agentSession.text.toString()).toBe("");
+	});
+
+	it("delivers a multibyte line intact", async () => {
+		const fixture = await createFixture();
+		const result = await command(fixture, {
+			op: "appendLine",
+			line: "café ☕",
+		});
+		expect(result.ok).toBe(true);
+		expect(fixture.humanSession.text.toString()).toBe("café ☕\n");
 	});
 
 	it("rejects fractional indices instead of handing them to the doc", async () => {

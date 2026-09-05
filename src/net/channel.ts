@@ -22,10 +22,16 @@ export interface Channel {
 // enough to stay cheap.
 const POLL_INTERVAL = 800;
 
-// How long one POST may take before it is abandoned. Posts go out one at a
-// time so their order holds, which means one that hangs would hold up every
-// frame behind it.
+// How long one POST attempt may take. Posts go out one at a time so their
+// order holds, which means one that hangs would hold up every frame behind it.
 const POST_TIMEOUT = 10_000;
+
+// A failed POST is tried again after this long, doubling each time up to the
+// cap, until it lands or the channel disconnects. A frame that never lands
+// is worse than a late one: every peer holds this client's later updates as
+// pending until the gap fills, so the room quietly forks.
+const RETRY_DELAY = 500;
+const RETRY_DELAY_CAP = 8_000;
 
 interface MessagesResponse {
 	cursor: number;
@@ -76,18 +82,42 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 	// order, and an edit overtaking the flag it withdrew is exactly the kind of
 	// reorder the session must never see.
 	let outbound: Promise<void> = Promise.resolve();
+	let disconnected = false;
+	let cancelBackoff: (() => void) | undefined;
+
+	// Every frame gets at least one attempt, even after disconnect — the
+	// departure frame is posted on the way out and must still leave.
+	async function deliver(body: string): Promise<void> {
+		let attempt = 0;
+		while (true) {
+			try {
+				const response = await fetch(sendUrl, {
+					method: "POST",
+					body,
+					signal: AbortSignal.timeout(POST_TIMEOUT),
+				});
+				if (response.ok) return;
+			} catch {
+				// Timed out or unreachable — same treatment as a refusal below.
+			}
+			if (disconnected) return;
+			const delay = Math.min(RETRY_DELAY * 2 ** attempt, RETRY_DELAY_CAP);
+			attempt += 1;
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(resolve, delay);
+				cancelBackoff = () => {
+					clearTimeout(timeout);
+					resolve();
+				};
+			});
+			if (disconnected) return;
+		}
+	}
 
 	return {
 		post(frame) {
-			outbound = outbound.then(() =>
-				fetch(sendUrl, {
-					method: "POST",
-					body: JSON.stringify(frame),
-					signal: AbortSignal.timeout(POST_TIMEOUT),
-				})
-					.then(() => undefined)
-					.catch(() => undefined),
-			);
+			const body = JSON.stringify(frame);
+			outbound = outbound.then(() => deliver(body));
 			return outbound;
 		},
 		subscribe(listener) {
@@ -97,6 +127,10 @@ export async function createTunnelChannel(url: string): Promise<Channel> {
 		async disconnect() {
 			clearInterval(timer);
 			listeners.clear();
+			// Whatever is queued gets one more try each; nothing waits out a
+			// backoff on the way out.
+			disconnected = true;
+			cancelBackoff?.();
 			await outbound;
 		},
 	};

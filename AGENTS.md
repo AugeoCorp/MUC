@@ -50,10 +50,13 @@ peer-to-peer.
   encoded as base64 frames and ridden over the channel, and inbound frames are
   applied to the Yjs doc. Because the relay replays its retained log to a late
   joiner, the document reconstructs automatically. **Ready flags live in the
-  doc**, not in awareness: `session.edit` withdraws the flags an edit
-  invalidates in the same transaction as the edit, so no one can ever see a flag
-  beside text it wasn't set against, and only a flag change can trigger the
-  send. A channel posts frames one at a time, in order, for the same reason.
+  doc**, not in awareness: `session.edit` withdraws the editor's own flag in the
+  same transaction as the edit, so no one can ever see a human's flag beside
+  text that human hasn't seen. An agent's edit touches no one's flag — agents
+  gate the send in neither direction. A channel posts frames one at a time, in
+  order, for the same reason, and retries a frame that fails to land until it
+  does or the channel disconnects — a lost frame would leave every peer waiting
+  on it.
 - The relay **compacts** that log so it never grows without bound: runs of
   consecutive document frames are periodically merged into one via
   `Y.mergeUpdates` (merged replay ≡ original replay, since Yjs updates are
